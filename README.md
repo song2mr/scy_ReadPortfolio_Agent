@@ -1,3 +1,14 @@
+---
+title: 포트폴리오 RAG 에이전트
+emoji: 📄
+colorFrom: indigo
+colorTo: slate
+sdk: gradio
+sdk_version: "6.5"
+app_file: app.py
+pinned: false
+---
+
 # 포트폴리오 RAG 에이전트
 
 PDF/Word 포트폴리오를 올려두면, 인사팀이 채팅으로 질문할 수 있는 RAG 에이전트입니다.  
