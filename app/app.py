@@ -345,15 +345,16 @@ def build_ui():
         for btn, q in zip(preset_btns, PRESET_QUESTIONS):
             btn.click(fn=lambda q=q: q, outputs=[txt])
         # 전송: 스트리밍 — 빈 입력이면 전송 안 함 / 사용자 메시지는 즉시 표시 후 LLM 응답 스트리밍
+        LOADING_PLACEHOLDER = "⏳ 검색·답변 생성 중..."
         def _submit_stream_ui(message, chat_value):
             pairs = _from_messages(chat_value or [])
             msg = (message or "").strip()
             if not msg:
                 yield _to_messages(pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
                 return
-            # 사용자 메시지 + 빈 답변을 먼저 표시하고 입력란 비우기 (전송이 됐다는 걸 바로 보여줌)
-            initial_pairs = pairs + [[msg, ""]]
-            yield _to_messages(initial_pairs), "", _format_stats(*_stats_from_history(initial_pairs)), _keyword_stats(initial_pairs)
+            # 사용자 메시지 + "처리 중" 표시 (로딩/오류 구분 가능)
+            initial_pairs = pairs + [[msg, LOADING_PLACEHOLDER]]
+            yield _to_messages(initial_pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
             for new_pairs, clear_txt, stats, keywords in _submit_stream(msg, pairs):
                 yield _to_messages(new_pairs), clear_txt, stats, keywords
         submit_btn.click(
