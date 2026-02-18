@@ -378,7 +378,8 @@ def get_answer(question: str, history_pairs: list | None = None):
     try:
         if _retriever is None:
             _, _retriever = get_chain()
-    except Exception:
+    except Exception as e:
+        print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
         return "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
     source_docs = _retriever.invoke(question)
     source_docs = _rerank_docs(question, source_docs)
@@ -441,7 +442,8 @@ def get_answer_stream(question: str, history_pairs: list | None = None):
         _debug(f"검색 완료 (문단 {len(source_docs)}개)")
         source_docs = _rerank_docs(question, source_docs)
         _debug(f"Rerank 후 문단 {len(source_docs)}개")
-    except Exception:
+    except Exception as e:
+        print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
         yield "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
         return
     context = _format_docs(source_docs)
