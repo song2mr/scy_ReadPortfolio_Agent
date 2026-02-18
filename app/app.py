@@ -313,101 +313,135 @@ def _generate_summary_pdf_or_txt(history: list) -> tuple[str, str]:
 
 def build_ui():
     with gr.Blocks(title="포트폴리오 Q&A") as demo:
-        gr.Markdown("""
+        # 비밀번호 미설정 시 로컬용: "dev" 입력 시 입장. 배포 시 Space Secrets에 APP_PASSWORD 설정.
+        _app_password = os.getenv("APP_PASSWORD", "").strip()
+        unlocked = gr.State(False)
+
+        with gr.Column(visible=True) as pwd_section:
+            gr.Markdown("### 🔐 입장을 위해 비밀번호를 입력하세요")
+            pwd_input = gr.Textbox(
+                label="비밀번호",
+                type="password",
+                placeholder="전달받은 비밀번호 입력",
+                max_lines=1,
+            )
+            pwd_btn = gr.Button("입장", variant="primary")
+            pwd_error = gr.Markdown("", visible=False)
+
+        with gr.Column(visible=False) as chat_section:
+            gr.Markdown("""
         ## 📄 포트폴리오 Q&A
         지원자 포트폴리오에 대해 궁금한 점을 물어보세요. 답변은 포트폴리오 내용을 바탕으로 합니다.
         """)
-        stats_md = gr.Markdown(_format_stats(0, 0), elem_classes=["stats-bar"])
-        chatbot = gr.Chatbot(
-            value=_to_messages([[None, FIRST_MESSAGE]]),
-            height=420,
-            elem_classes=["chat-container"],
-            render_markdown=True,
-        )
-        with gr.Accordion("✨ 추천 질문", open=False):
+            stats_md = gr.Markdown(_format_stats(0, 0), elem_classes=["stats-bar"])
+            chatbot = gr.Chatbot(
+                value=_to_messages([[None, FIRST_MESSAGE]]),
+                height=420,
+                elem_classes=["chat-container"],
+                render_markdown=True,
+            )
+            with gr.Accordion("✨ 추천 질문", open=False):
+                with gr.Row():
+                    preset_btns = [gr.Button(q, size="sm", variant="secondary") for q in PRESET_QUESTIONS]
+            txt = gr.Textbox(
+                placeholder="질문을 입력하세요... (Enter로 전송)",
+                label="",
+                scale=7,
+                container=False,
+                max_lines=2,
+            )
             with gr.Row():
-                preset_btns = [gr.Button(q, size="sm", variant="secondary") for q in PRESET_QUESTIONS]
-        txt = gr.Textbox(
-            placeholder="질문을 입력하세요... (Enter로 전송)",
-            label="",
-            scale=7,
-            container=False,
-            max_lines=2,
-        )
-        with gr.Row():
-            submit_btn = gr.Button("전송", variant="primary", size="lg")
-            summary_btn = gr.Button("📥 요약 다운로드 (MD)", variant="secondary", size="lg")
-            summary_pdf_btn = gr.Button("📥 요약 다운로드 (PDF)", variant="secondary", size="lg")
-            clear_btn = gr.Button("🗑️ 대화 초기화", variant="stop", size="lg")
-        summary_file = gr.File(label="대화 요약 파일", visible=True, interactive=False)
-        keyword_md = gr.Markdown(_keyword_stats([]), elem_classes=["stats-bar"])
-        # 프리셋: 클릭 시 입력창에 질문 넣기 (추천 질문만 사용, 예시 질문 제거)
-        for btn, q in zip(preset_btns, PRESET_QUESTIONS):
-            btn.click(fn=lambda q=q: q, outputs=[txt])
-        # 전송: 스트리밍 — 빈 입력이면 전송 안 함 / 사용자 메시지는 즉시 표시 후 LLM 응답 스트리밍
-        LOADING_PLACEHOLDER = "⏳ 검색·답변 생성 중..."
-        def _submit_stream_ui(message, chat_value):
-            pairs = _from_messages(chat_value or [])
-            msg = (message or "").strip()
-            if not msg:
-                yield _to_messages(pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
-                return
-            # 사용자 메시지 + "처리 중" 표시 (로딩/오류 구분 가능)
-            initial_pairs = pairs + [[msg, LOADING_PLACEHOLDER]]
-            yield _to_messages(initial_pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
-            for new_pairs, clear_txt, stats, keywords in _submit_stream(msg, pairs):
-                yield _to_messages(new_pairs), clear_txt, stats, keywords
-        submit_btn.click(
-            fn=_submit_stream_ui,
-            inputs=[txt, chatbot],
-            outputs=[chatbot, txt, stats_md, keyword_md],
-            show_progress=False,
-        ).then(fn=lambda: "", outputs=[txt])
-        txt.submit(
-            fn=_submit_stream_ui,
-            inputs=[txt, chatbot],
-            outputs=[chatbot, txt, stats_md, keyword_md],
-            show_progress=False,
-        ).then(fn=lambda: "", outputs=[txt])
-        # 대화 초기화
-        def on_clear():
-            gr.Info("대화가 초기화되었습니다.")
-            return _to_messages([[None, FIRST_MESSAGE]]), _format_stats(0, 0), _keyword_stats([])
-        clear_btn.click(
-            fn=on_clear,
-            inputs=[],
-            outputs=[chatbot, stats_md, keyword_md],
-        )
-        # 요약 다운로드 (MD) — Chatbot에서 오는 값은 messages
-        def on_summary_md(chat_value):
-            pairs = _from_messages(chat_value or [])
-            path = _generate_summary_file(pairs)
-            if path:
-                gr.Info("요약 파일이 준비되었습니다. 아래에서 다운로드하세요.")
-                return path
-            gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
-            return None
-        summary_btn.click(
-            fn=on_summary_md,
-            inputs=[chatbot],
-            outputs=[summary_file],
-        )
-        # 요약 다운로드 (PDF)
-        def on_summary_pdf(chat_value):
-            pairs = _from_messages(chat_value or [])
-            path, fmt = _generate_summary_pdf_or_txt(pairs)
-            if not path:
+                submit_btn = gr.Button("전송", variant="primary", size="lg")
+                summary_btn = gr.Button("📥 요약 다운로드 (MD)", variant="secondary", size="lg")
+                summary_pdf_btn = gr.Button("📥 요약 다운로드 (PDF)", variant="secondary", size="lg")
+                clear_btn = gr.Button("🗑️ 대화 초기화", variant="stop", size="lg")
+            summary_file = gr.File(label="대화 요약 파일", visible=True, interactive=False)
+            keyword_md = gr.Markdown(_keyword_stats([]), elem_classes=["stats-bar"])
+            # 프리셋: 클릭 시 입력창에 질문 넣기
+            for btn, q in zip(preset_btns, PRESET_QUESTIONS):
+                btn.click(fn=lambda q=q: q, outputs=[txt])
+            LOADING_PLACEHOLDER = "⏳ 검색·답변 생성 중..."
+            def _submit_stream_ui(message, chat_value):
+                pairs = _from_messages(chat_value or [])
+                msg = (message or "").strip()
+                if not msg:
+                    yield _to_messages(pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
+                    return
+                initial_pairs = pairs + [[msg, LOADING_PLACEHOLDER]]
+                yield _to_messages(initial_pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
+                for new_pairs, clear_txt, stats, keywords in _submit_stream(msg, pairs):
+                    yield _to_messages(new_pairs), clear_txt, stats, keywords
+            submit_btn.click(
+                fn=_submit_stream_ui,
+                inputs=[txt, chatbot],
+                outputs=[chatbot, txt, stats_md, keyword_md],
+                show_progress=False,
+            ).then(fn=lambda: "", outputs=[txt])
+            txt.submit(
+                fn=_submit_stream_ui,
+                inputs=[txt, chatbot],
+                outputs=[chatbot, txt, stats_md, keyword_md],
+                show_progress=False,
+            ).then(fn=lambda: "", outputs=[txt])
+            def on_clear():
+                gr.Info("대화가 초기화되었습니다.")
+                return _to_messages([[None, FIRST_MESSAGE]]), _format_stats(0, 0), _keyword_stats([])
+            clear_btn.click(
+                fn=on_clear,
+                inputs=[],
+                outputs=[chatbot, stats_md, keyword_md],
+            )
+            def on_summary_md(chat_value):
+                pairs = _from_messages(chat_value or [])
+                path = _generate_summary_file(pairs)
+                if path:
+                    gr.Info("요약 파일이 준비되었습니다. 아래에서 다운로드하세요.")
+                    return path
                 gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
                 return None
-            if fmt == "pdf":
-                gr.Info("PDF 파일이 준비되었습니다. 아래에서 다운로드하세요.")
-            else:
-                gr.Warning("한글 PDF 생성에 실패해 텍스트(.txt) 파일로 저장했습니다. 아래에서 다운로드하세요.")
-            return path
-        summary_pdf_btn.click(
-            fn=on_summary_pdf,
-            inputs=[chatbot],
-            outputs=[summary_file],
+            summary_btn.click(
+                fn=on_summary_md,
+                inputs=[chatbot],
+                outputs=[summary_file],
+            )
+            def on_summary_pdf(chat_value):
+                pairs = _from_messages(chat_value or [])
+                path, fmt = _generate_summary_pdf_or_txt(pairs)
+                if not path:
+                    gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
+                    return None
+                if fmt == "pdf":
+                    gr.Info("PDF 파일이 준비되었습니다. 아래에서 다운로드하세요.")
+                else:
+                    gr.Warning("한글 PDF 생성에 실패해 텍스트(.txt) 파일로 저장했습니다. 아래에서 다운로드하세요.")
+                return path
+            summary_pdf_btn.click(
+                fn=on_summary_pdf,
+                inputs=[chatbot],
+                outputs=[summary_file],
+            )
+
+        def _check_pwd(pwd):
+            expect = _app_password if _app_password else "dev"
+            ok = (pwd or "").strip() == expect
+            if ok:
+                return (
+                    gr.update(visible=False),
+                    gr.update(visible=True),
+                    "",
+                    gr.update(visible=False),
+                )
+            return (
+                gr.update(visible=True),
+                gr.update(visible=False),
+                "",
+                gr.update(value="⚠️ 비밀번호가 올바르지 않습니다.", visible=True),
+            )
+
+        pwd_btn.click(
+            fn=_check_pwd,
+            inputs=[pwd_input],
+            outputs=[pwd_section, chat_section, pwd_input, pwd_error],
         )
     return demo
 
