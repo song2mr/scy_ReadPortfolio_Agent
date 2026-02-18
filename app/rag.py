@@ -62,6 +62,24 @@ def _debug(msg: str) -> None:
         print(f"[RAG] {msg}", flush=True)
 
 
+def _ensure_index_dir():
+    """로컬에 인덱스가 없고 HF_INDEX_DATASET 이 설정되어 있으면 Dataset에서 index/ 로 다운로드."""
+    index_dir = Path(config.INDEX_DIR)
+    if (index_dir / "index.faiss").exists():
+        return
+    hf_dataset = os.getenv("HF_INDEX_DATASET", "").strip()
+    if not hf_dataset:
+        return
+    try:
+        from huggingface_hub import snapshot_download
+        _debug(f"HF Dataset에서 인덱스 다운로드 중: {hf_dataset}")
+        index_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_download(repo_id=hf_dataset, repo_type="dataset", local_dir=str(index_dir))
+        _debug("인덱스 다운로드 완료")
+    except Exception as e:
+        _debug(f"HF 인덱스 다운로드 실패: {e}")
+
+
 def _load_retriever(k: int | None = None):
     """k 미지정 시 Reranker 활성이면 RETRIEVE_K_INITIAL, 아니면 RETRIEVE_K 사용."""
     if k is not None:
@@ -70,6 +88,7 @@ def _load_retriever(k: int | None = None):
         use_k = getattr(config, "RETRIEVE_K_INITIAL", 15)
     else:
         use_k = config.RETRIEVE_K
+    _ensure_index_dir()
     _debug("임베딩 모델 로드 중...")
     embeddings = HuggingFaceEmbeddings(
         model_name=config.EMBEDDING_MODEL,
