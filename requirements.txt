@@ -1,0 +1,18 @@
+# Hugging Face Spaces용. pip install -r requirements.txt
+# 로컬 개발은 uv + pyproject.toml 사용 권장.
+docx2txt>=0.9
+faiss-cpu>=1.13.2
+gradio>=6.5.1
+langchain>=1.2.10
+langchain-community>=0.4.1
+langchain-openai>=1.1.9
+langchain-text-splitters>=0.3.0
+langchain-google-community[drive]>=2.0.0
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+pypdf>=6.7.0
+PyPDF2>=3.0.0
+python-dotenv>=1.2.1
+reportlab>=4.0.0
+sentence-transformers>=5.2.0
