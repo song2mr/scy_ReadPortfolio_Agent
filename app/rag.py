@@ -69,15 +69,26 @@ def _ensure_index_dir():
         return
     hf_dataset = os.getenv("HF_INDEX_DATASET", "").strip()
     if not hf_dataset:
+        print("[RAG] HF_INDEX_DATASET 미설정. Space 설정 → Variables에 HF_INDEX_DATASET=아이디/데이터셋이름 추가 후 재시작하세요.", flush=True)
         return
     try:
         from huggingface_hub import snapshot_download
-        _debug(f"HF Dataset에서 인덱스 다운로드 중: {hf_dataset}")
+        print(f"[RAG] HF에서 인덱스 다운로드 중: {hf_dataset}", flush=True)
         index_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_download(repo_id=hf_dataset, repo_type="dataset", local_dir=str(index_dir))
-        _debug("인덱스 다운로드 완료")
+        for repo_type in ("dataset", "model"):
+            try:
+                snapshot_download(repo_id=hf_dataset, repo_type=repo_type, local_dir=str(index_dir))
+                if (index_dir / "index.faiss").exists():
+                    print("[RAG] 인덱스 다운로드 완료.", flush=True)
+                    return
+            except Exception as e:
+                if repo_type == "dataset":
+                    print(f"[RAG] Dataset 다운로드 실패, Model 시도: {e}", flush=True)
+                else:
+                    raise
+        print("[RAG] index.faiss를 찾을 수 없습니다. Dataset/Model 루트에 index.faiss, index.pkl을 올렸는지 확인하세요.", flush=True)
     except Exception as e:
-        _debug(f"HF 인덱스 다운로드 실패: {e}")
+        print(f"[RAG] HF 인덱스 다운로드 실패: {e}", flush=True)
 
 
 def _load_retriever(k: int | None = None):
