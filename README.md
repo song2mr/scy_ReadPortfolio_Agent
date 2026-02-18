@@ -2,7 +2,7 @@
 title: 포트폴리오 RAG 에이전트
 emoji: 📄
 colorFrom: indigo
-colorTo: slate
+colorTo: gray
 sdk: gradio
 sdk_version: "6.5"
 app_file: app.py
