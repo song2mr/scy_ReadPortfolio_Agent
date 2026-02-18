@@ -194,7 +194,7 @@ uv run python scripts/evaluate_rag.py
 | ❌ | `.env` | 절대 푸시 금지. API 키는 Space **Settings → Secrets** 에 등록. |
 | ❌ | `token.json`, `credentials.json` | 구글 드라이브 인증 파일 (로컬 전용). |
 
-- **인덱스**: 로컬에서 `uv run python scripts/build_index.py` 로 `index/` 를 만든 뒤, `index/` 폴더 통째로 Space repo에 포함하면 됩니다. 인덱스를 넣지 않으면 앱 시작 시 문서가 없어 RAG가 동작하지 않을 수 있습니다.
+- **인덱스**: Git으로는 바이너리(FAISS) 푸시가 거절되므로, **Hugging Face Dataset**에 올린 뒤 Space에서 불러오도록 할 수 있습니다. (아래 [Space에 인덱스 넣기](#space에-인덱스-넣기-hf-dataset) 참고.)
 - **진입점**: Space는 기본적으로 루트의 `app.py` 를 실행합니다. 이 파일이 `app.app.build_ui()` 로 UI를 만들고 `demo` 를 내놓으므로 별도 설정 없이 동작합니다.
 
 ### 3. Secrets 설정
@@ -211,7 +211,33 @@ uv run python scripts/evaluate_rag.py
 - 무료 CPU Basic은 사용하지 않으면 **슬립**됩니다. 링크로 다시 접속하면 깨우는 데 시간이 걸릴 수 있습니다.
 - Private이면 Space URL을 아는 사람만 접속할 수 없고, 로그인한 본인만 볼 수 있습니다. (다른 사용자는 404.)
 
-### 5. 요약
+### 5. Space에 인덱스 넣기 (HF Dataset)
+
+Git으로는 `index.faiss` / `index.pkl` 같은 바이너리가 푸시되지 않으므로, **Dataset**에 올리고 Space 앱이 시작할 때 다운로드해 쓰도록 합니다.
+
+1. **로컬에서 인덱스 빌드**
+   ```bash
+   uv run python scripts/build_index.py
+   ```
+   `index/` 에 `index.faiss`, `index.pkl` 이 생성됩니다.
+
+2. **Hugging Face에 Dataset 생성**
+   - [huggingface.co/datasets](https://huggingface.co/datasets) → **Create new dataset**.
+   - 이름 예: `portfolio-rag-index`, **Private** 선택 후 생성.
+
+3. **인덱스 파일 업로드**
+   - Dataset 저장소 페이지에서 **Files** → **Add file** → **Upload files**.
+   - 로컬의 `index/index.faiss`, `index/index.pkl` 두 파일을 업로드 (Dataset **루트**에 두면 됨).
+
+4. **Space에 Dataset 이름 알려주기**
+   - Space 저장소 → **Settings** → **Variables and secrets**.
+   - **New variable** 추가: 이름 `HF_INDEX_DATASET`, 값 `본인아이디/데이터셋이름` (예: `chanyoung12/portfolio-rag-index`).
+   - Private Dataset이면 Space가 같은 HF 계정으로 돌아가므로 그대로 접근 가능합니다.
+
+5. **동작**
+   - Space 앱이 뜰 때 로컬 `index/` 에 인덱스가 없고 `HF_INDEX_DATASET` 이 있으면, 해당 Dataset에서 파일을 받아온 뒤 FAISS를 로드합니다. 첫 기동 시 다운로드 때문에 조금 더 걸릴 수 있습니다.
+
+### 6. 요약
 
 | 항목 | 내용 |
 |------|------|
@@ -219,7 +245,7 @@ uv run python scripts/evaluate_rag.py
 | 비용 | 저장 100GB·CPU Basic 무료. 추가 하드웨어는 유료. |
 | 진입점 | 루트 `app.py` (Gradio `demo`). |
 | API 키 | 코드에 넣지 말고 Space **Settings → Secrets** 에 `OPENAI_API_KEY` 등록. |
-| 인덱스 | 로컬에서 빌드한 `index/` 를 repo에 포함해 푸시. |
+| 인덱스 | HF Dataset에 `index.faiss`, `index.pkl` 업로드 후 Space 변수 `HF_INDEX_DATASET` 에 `아이디/데이터셋이름` 설정. |
 
 ---
 
