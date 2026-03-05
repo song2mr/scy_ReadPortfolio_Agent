@@ -1,10 +1,12 @@
 """
-포트폴리오 문서를 로드·청킹·임베딩 후 FAISS 인덱스를 생성해 index/ 에 저장합니다.
+포트폴리오 문서를 로드·청킹·임베딩 후 FAISS + BM25(Kiwi) 인덱스를 index/ 에 저장합니다.
+HF 업로드 시 index/ 폴더 전체(index.faiss, index.pkl, bm25_*.pkl)를 올리면 됩니다.
 - 로컬: data/portfolio/ 의 PDF, DOCX 사용
 - 구글 드라이브: .env 에 GOOGLE_DRIVE_FOLDER_ID 설정 시 해당 폴더에서 문서 로드
 실행: 프로젝트 루트에서 uv run python scripts/build_index.py
 """
 import os
+import pickle
 import sys
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from langchain_community.document_loaders.word_document import Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from rank_bm25 import BM25Okapi
 
 import config
 
@@ -112,7 +115,22 @@ def main():
     config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
     vectorstore = FAISS.from_documents(chunks, embeddings)
     vectorstore.save_local(str(config.INDEX_DIR))
-    print(f"  저장 완료: {config.INDEX_DIR}")
+    print(f"  FAISS 저장 완료: {config.INDEX_DIR}")
+
+    # BM25 인덱스 (Kiwi 형태소): HF 업로드 시 index/ 에 함께 포함
+    print("BM25(Kiwi) 인덱스 생성 중...")
+    from kiwipiepy import Kiwi
+    kiwi = Kiwi()
+    corpus_tokens = []
+    for doc in chunks:
+        tokens = [t.form for t in kiwi.tokenize(doc.page_content)]
+        corpus_tokens.append(tokens)
+    bm25 = BM25Okapi(corpus_tokens)
+    with open(config.INDEX_DIR / "bm25_corpus.pkl", "wb") as f:
+        pickle.dump(corpus_tokens, f)
+    with open(config.INDEX_DIR / "bm25_docs.pkl", "wb") as f:
+        pickle.dump(chunks, f)
+    print(f"  BM25 저장 완료: bm25_corpus.pkl, bm25_docs.pkl")
 
 
 if __name__ == "__main__":

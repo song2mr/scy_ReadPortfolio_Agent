@@ -10,13 +10,14 @@ pinned: false
 
 # 포트폴리오 RAG 에이전트
 
-PDF/Word 포트폴리오를 올려두면, 인사팀이 채팅으로 질문할 수 있는 RAG 에이전트입니다.  
-Gradio + LangChain + FAISS + OpenAI. 배포는 Hugging Face Spaces(Private 권장).
+PDF/Word 또는 Google Drive(문서·스프레드시트·PDF) 포트폴리오를 인덱싱해 두면, 인사팀이 채팅으로 질문할 수 있는 RAG 에이전트입니다.  
+Gradio + LangChain + Hybrid Search(FAISS + BM25/Kiwi) + OpenAI. 배포는 Hugging Face Spaces(Private 권장).
 
 ## 기능 요약
 
 - **3-way 라우터**: 질문을 한 번에 RAG / NO_RAG(인사·메타) / GENERAL(무관)으로 분류. 대화 히스토리를 참고해 맥락 있는 분류.
-- **RAG 답변**: 포트폴리오 문서 검색(FAISS) 후 OpenAI로 답변 생성. 참고 문단 접기 표시.
+- **Query Expansion**: 질문만 LLM 재작성(단일 → 1줄, 포괄적 → 2~4개 하위 질문). 각 쿼리별 검색 후 RRF 병합.
+- **RAG 답변**: Hybrid Search(FAISS Dense + BM25/Kiwi Sparse, RRF 병합) + Reranker(Cross-Encoder) 후 OpenAI로 답변 생성. 참고 문단 접기 표시.
 - **스트리밍**: 답변이 토큰 단위로 실시간 출력.
 - **대화 요약 다운로드**: MD / PDF(한글 실패 시 TXT)로 대화 요약 + 전체 내역 저장.
 - **질문 키워드 통계**: 경력, 강점, 프로젝트 등 키워드 언급 횟수 표시.
@@ -49,7 +50,7 @@ cp .env.example .env
 uv run python scripts/build_index.py
 ```
 
-- `index/` 에 FAISS 인덱스가 생성됩니다.
+- `index/` 에 FAISS 인덱스와 BM25(Kiwi) 인덱스(`bm25_corpus.pkl`, `bm25_docs.pkl`)가 생성됩니다.
 - 문서를 바꾼 뒤에는 이 명령을 다시 실행하세요.
 - 구글 드라이브를 쓰는 경우 `.env` 에 `GOOGLE_DRIVE_FOLDER_ID` 가 있으면 드라이브에서 로드하고, 없으면 `data/portfolio/` 에서 로드합니다.
 
@@ -75,10 +76,11 @@ uv run python -m app.app
 |------|------|--------|
 | `OPENAI_MODEL` | 답변 생성(RAG·NO_RAG·GENERAL)용 모델 | `gpt-5-mini` |
 | `OPENAI_MODEL_ROUTER` | 라우터(RAG/NO_RAG/GENERAL 분류)용 모델 | `gpt-4o-mini` |
-| `RETRIEVE_K` | RAG 검색 시 가져올 청크 수 | `6` |
+| `HYBRID_DENSE_K` / `HYBRID_SPARSE_K` | 쿼리당 Dense(FAISS)·Sparse(BM25) top-k | `5` / `5` |
+| `HYBRID_MERGE_TOP_N` | RRF 병합 후 Reranker 전 상위 개수 | `5` |
+| `QUERY_EXPANSION_MAX_SUB_QUERIES` | 포괄적 질문 시 하위 질문 최대 개수 | `5` |
 | `EVAL_RETRY_ENABLED` | 평가 후 재시도 사용 여부 | `True` |
 | `EVAL_MIN_FAITHFULNESS` / `EVAL_MIN_RELEVANCE` | 이 점수 미만이면 k 늘려 재시도 | `3` |
-| `RETRIEVE_K_RETRY` | 재시도 시 k | `8` |
 | `EMBEDDING_MODEL` | FAISS 임베딩 모델 | `jhgan/ko-sroberta-multitask` |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | 인덱스 빌드 시 청킹 | `800` / `150` |
 
@@ -102,7 +104,7 @@ uv run python -m app.app
    - (선택) `GOOGLE_DRIVE_CREDENTIALS_PATH`, `GOOGLE_DRIVE_TOKEN_PATH`, `GOOGLE_DRIVE_RECURSIVE=true` 등 설정.
 
 4. **인덱스 빌드**  
-   - `uv run python scripts/build_index.py` 실행 시 `GOOGLE_DRIVE_FOLDER_ID` 가 있으면 해당 폴더에서 문서를 가져와 청킹·임베딩 후 `index/` 에 FAISS를 저장합니다.  
+   - `uv run python scripts/build_index.py` 실행 시 `GOOGLE_DRIVE_FOLDER_ID` 가 있으면 해당 폴더에서 문서를 가져와 청킹·임베딩 후 `index/` 에 FAISS와 BM25(Kiwi) 인덱스를 저장합니다.  
    - 지원 형식: Google Docs, Google 스프레드시트, PDF.
 
 ## 디버깅
@@ -140,13 +142,13 @@ LLM이 이전 대화를 기억하고 이어서 답하도록, **매 질문마다 
 ├── config.py           # 경로, 청킹, 검색, LLM 모델 등 설정
 ├── app/
 │   ├── app.py          # UI 구성 (build_ui), 전송·요약·초기화 이벤트
-│   ├── rag.py          # 라우터, RAG 체인, get_answer / get_answer_stream
+│   ├── rag.py          # 라우터, Query Expansion, Hybrid Search, get_answer / get_answer_stream
 │   └── rag_eval.py     # Faithfulness / Relevance 평가 (evaluate_response_from_docs)
 ├── scripts/
-│   ├── build_index.py  # 로컬 data/portfolio 또는 구글 드라이브 → 청킹 → 임베딩 → index/ FAISS 저장
+│   ├── build_index.py  # 로컬 또는 구글 드라이브 → 청킹 → 임베딩 → index/ (FAISS + BM25)
 │   └── evaluate_rag.py # RAG 평가 스크립트 (선택)
-├── data/portfolio/     # PDF·DOCX 원본
-├── index/              # FAISS 인덱스 (build_index.py 실행 후 생성)
+├── data/portfolio/     # PDF·DOCX 원본 (로컬 사용 시)
+├── index/              # FAISS + BM25 인덱스 (build_index.py 실행 후 생성)
 ├── docs/
 │   └── 코드_동작_설명.md
 └── .env                # OPENAI_API_KEY (git 제외)
@@ -188,13 +190,13 @@ uv run python scripts/evaluate_rag.py
 | ✅ | `config.py` | 경로, 청킹, 모델 등 설정 |
 | ✅ | `app/` | `app.py`, `rag.py`, `rag_eval.py` 전체 폴더 |
 | ✅ | `scripts/` | `build_index.py` (인덱스 없을 때 빌드용, 선택) |
-| ✅ | `index/` | FAISS 인덱스 (`*.faiss`, `*.pkl` 등). **미리 로컬에서 빌드한 뒤** 커밋해서 올리세요. |
+| ✅ | `index/` | FAISS 인덱스(`index.faiss`, `index.pkl`) + BM25(`bm25_corpus.pkl`, `bm25_docs.pkl`). **미리 로컬에서 빌드한 뒤** 커밋 또는 HF Dataset으로 올리세요. |
 | ✅ | `data/portfolio/` | 배포 시 사용할 PDF·DOCX (선택). 인덱스를 repo에 넣으면 없어도 됨. |
 | ✅ | `requirements.txt` | Space용 의존성 (pip 설치). 프로젝트 루트에 있음. |
 | ❌ | `.env` | 절대 푸시 금지. API 키는 Space **Settings → Secrets** 에 등록. |
 | ❌ | `token.json`, `credentials.json` | 구글 드라이브 인증 파일 (로컬 전용). |
 
-- **인덱스**: Git으로는 바이너리(FAISS) 푸시가 거절되므로, **Hugging Face Dataset**에 올린 뒤 Space에서 불러오도록 할 수 있습니다. (아래 [Space에 인덱스 넣기](#space에-인덱스-넣기-hf-dataset) 참고.)
+- **인덱스**: Git으로는 바이너리(FAISS·BM25) 푸시가 거절될 수 있으므로, **Hugging Face Dataset**에 올린 뒤 Space에서 불러오도록 할 수 있습니다. (아래 [Space에 인덱스 넣기](#space에-인덱스-넣기-hf-dataset) 참고.)
 - **진입점**: Space는 기본적으로 루트의 `app.py` 를 실행합니다. 이 파일이 `app.app.build_ui()` 로 UI를 만들고 `demo` 를 내놓으므로 별도 설정 없이 동작합니다.
 
 ### 3. Secrets 설정
@@ -227,7 +229,7 @@ Git으로는 `index.faiss` / `index.pkl` 같은 바이너리가 푸시되지 않
 
 3. **인덱스 파일 업로드**
    - Dataset 저장소 페이지에서 **Files** → **Add file** → **Upload files**.
-   - 로컬의 `index/index.faiss`, `index/index.pkl` 두 파일을 업로드 (Dataset **루트**에 두면 됨).
+   - 로컬의 `index/index.faiss`, `index/index.pkl`, `index/bm25_corpus.pkl`, `index/bm25_docs.pkl` 을 업로드 (Dataset **루트**에 두면 됨). BM25 파일이 없으면 Space는 Dense(FAISS)만 사용합니다.
 
 4. **Space에 Dataset 이름 알려주기**
    - Space 저장소 → **Settings** → **Variables and secrets**.
@@ -235,7 +237,7 @@ Git으로는 `index.faiss` / `index.pkl` 같은 바이너리가 푸시되지 않
    - Private Dataset이면 Space가 같은 HF 계정으로 돌아가므로 그대로 접근 가능합니다.
 
 5. **동작**
-   - Space 앱이 뜰 때 로컬 `index/` 에 인덱스가 없고 `HF_INDEX_DATASET` 이 있으면, 해당 Dataset에서 파일을 받아온 뒤 FAISS를 로드합니다. 첫 기동 시 다운로드 때문에 조금 더 걸릴 수 있습니다.
+   - Space 앱이 뜰 때 로컬 `index/` 에 인덱스가 없고 `HF_INDEX_DATASET` 이 있으면, 해당 Dataset에서 파일을 받아온 뒤 FAISS·BM25를 로드합니다. 첫 기동 시 다운로드 때문에 조금 더 걸릴 수 있습니다.
 
 ### 6. 요약
 
@@ -245,7 +247,7 @@ Git으로는 `index.faiss` / `index.pkl` 같은 바이너리가 푸시되지 않
 | 비용 | 저장 100GB·CPU Basic 무료. 추가 하드웨어는 유료. |
 | 진입점 | 루트 `app.py` (Gradio `demo`). |
 | API 키 | 코드에 넣지 말고 Space **Settings → Secrets** 에 `OPENAI_API_KEY` 등록. |
-| 인덱스 | HF Dataset에 `index.faiss`, `index.pkl` 업로드 후 Space 변수 `HF_INDEX_DATASET` 에 `아이디/데이터셋이름` 설정. |
+| 인덱스 | HF Dataset에 `index.faiss`, `index.pkl`, `bm25_corpus.pkl`, `bm25_docs.pkl` 업로드 후 Space 변수 `HF_INDEX_DATASET` 에 `아이디/데이터셋이름` 설정. |
 
 ---
 
