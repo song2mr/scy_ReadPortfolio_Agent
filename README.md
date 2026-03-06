@@ -107,6 +107,16 @@ uv run python -m app.app
    - `uv run python scripts/build_index.py` 실행 시 `GOOGLE_DRIVE_FOLDER_ID` 가 있으면 해당 폴더에서 문서를 가져와 청킹·임베딩 후 `index/` 에 FAISS와 BM25(Kiwi) 인덱스를 저장합니다.  
    - 지원 형식: Google Docs, Google 스프레드시트, PDF.
 
+## LangSmith (트레이싱)
+
+RAG·라우터·LLM 호출을 [LangSmith](https://smith.langchain.com/)에서 트레이스로 보려면 `.env`에 다음을 설정합니다.
+
+- `LANGSMITH_TRACING=true`
+- `LANGSMITH_API_KEY=lsv2_pt_...` (smith.langchain.com에서 발급)
+- (선택) `LANGSMITH_PROJECT=scy-rag` — 트레이스를 보낼 프로젝트 이름
+
+설정 후 앱·인덱스 빌드를 실행하면 별도 코드 수정 없이 LangChain 실행이 자동으로 LangSmith에 기록됩니다.
+
 ## 디버깅
 
 앱이 무한 로딩되거나 RAG 동작을 확인하고 싶을 때: `.env` 에 `DEBUG_RAG=1` 을 넣고 터미널에서 앱을 실행하면, 라우터 분류·검색·스트리밍 단계별로 `[RAG]`, `[APP]` 로그가 출력됩니다.

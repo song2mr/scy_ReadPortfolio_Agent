@@ -6,6 +6,7 @@ gradio>=6.5.1
 langchain>=1.2.10
 langchain-community>=0.4.1
 langchain-openai>=1.1.9
+langsmith>=0.2.0
 langchain-text-splitters>=0.3.0
 langchain-google-community[drive]>=2.0.0
 google-api-python-client>=2.100.0

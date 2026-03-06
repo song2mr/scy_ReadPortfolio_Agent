@@ -1,0 +1,26 @@
+[project]
+name = "scy-rag"
+version = "0.1.0"
+description = "포트폴리오 RAG 에이전트 — PDF/Word 기반, Gradio 채팅, HF Spaces 배포"
+requires-python = ">=3.13"
+dependencies = [
+    "docx2txt>=0.9",
+    "faiss-cpu>=1.13.2",
+    "gradio>=6.5.1",
+    "langchain>=1.2.10",
+    "langchain-community>=0.4.1",
+    "langchain-openai>=1.1.9",
+    "langsmith>=0.2.0",
+    "langchain-text-splitters>=0.3.0",
+    "langchain-google-community[drive]>=2.0.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.0",
+    "pypdf>=6.7.0",
+    "PyPDF2>=3.0.0",
+    "python-dotenv>=1.2.1",
+    "reportlab>=4.0.0",
+    "sentence-transformers>=5.2.0",
+    "rank_bm25>=0.2.2",
+    "kiwipiepy>=0.18.0",
+]
