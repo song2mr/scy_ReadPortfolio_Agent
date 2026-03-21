@@ -1,0 +1,18 @@
+# PR에 10MB 초과 파일이 들어오면 경고 (HF Spaces 제한)
+# https://huggingface.co/docs/hub/spaces-github-actions
+
+name: Check file size (HF Spaces limit)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check-large-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check large files
+        uses: ActionsDesk/lfs-warning@v2.0
+        with:
+          filesizelimit: 10485760 # 10MB

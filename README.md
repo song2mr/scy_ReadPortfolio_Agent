@@ -215,6 +215,16 @@ uv run python scripts/evaluate_rag.py
 
 무료 계정으로 **Private** Space를 만들어 다른 사람이 보지 못하게 배포할 수 있습니다. (무료 private 저장 100GB 이내, CPU Basic 하드웨어 무료.)
 
+### GitHub → Space 자동 동기화 (Actions)
+
+`main`에 푸시하면 [Hugging Face Space **chanyoung12/BoradGameRule_RAG**](https://huggingface.co/spaces/chanyoung12/BoradGameRule_RAG)로 동기화합니다. ([공식 가이드](https://huggingface.co/docs/hub/spaces-github-actions))
+
+1. GitHub 저장소 **Settings → Secrets and variables → Actions**에서 **New repository secret**으로 **`HF_TOKEN`**을 추가합니다.  
+   - 토큰은 Hugging Face [Settings → Access Tokens](https://huggingface.co/settings/tokens)에서 발급하고, Space에 푸시할 수 있도록 **쓰기 권한**이 있는 토큰을 쓰세요.
+2. `git push origin main` 후 **Actions** 탭에서 **Sync to Hugging Face Space** 워크플로가 성공하는지 확인합니다.
+
+**참고**: 10MB를 넘는 파일은 Spaces에 올릴 때 [Git LFS](https://huggingface.co/docs/hub/spaces-github-actions)가 필요합니다. PR에는 `.github/workflows/check-file-size.yml`로 크기 경고가 붙습니다.
+
 ### 1. Space 만들기
 
 1. [huggingface.co](https://huggingface.co) 로그인(또는 가입).

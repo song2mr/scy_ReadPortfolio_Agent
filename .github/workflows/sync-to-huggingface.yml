@@ -1,0 +1,31 @@
+# Hugging Face Spaces와 GitHub 저장소 동기화
+# https://huggingface.co/docs/hub/spaces-github-actions
+#
+# 필요한 설정 (GitHub 저장소 → Settings → Secrets and variables → Actions):
+#   HF_TOKEN — Hugging Face에서 발급한 토큰 (Spaces에 쓰기 권한이 있는 토큰 권장)
+#
+# Space: chanyoung12/BoradGameRule_RAG
+# 10MB 초과 파일은 Spaces에서 Git LFS 필요 — 큰 바이너리는 히스토리에 넣지 말 것
+
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push "https://chanyoung12:${HF_TOKEN}@huggingface.co/spaces/chanyoung12/BoradGameRule_RAG" main
