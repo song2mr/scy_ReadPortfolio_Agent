@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG 질문 처리 과정</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --rag: #3fb950;
+      --no-rag: #d29922;
+      --general: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.35rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+    .diagram-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      overflow: auto;
+    }
+    .diagram {
+      min-width: 720px;
+      margin: 0 auto;
+    }
+    svg { display: block; }
+    .node {
+      fill: var(--card);
+      stroke: var(--border);
+      stroke-width: 1.5;
+      rx: 6;
+    }
+    .node.input { fill: #1c2128; stroke: #58a6ff; }
+    .node.router { fill: #1c2128; stroke: #d29922; }
+    .node.rag { fill: rgba(63,185,80,0.12); stroke: var(--rag); }
+    .node.no-rag { fill: rgba(210,153,34,0.12); stroke: var(--no-rag); }
+    .node.general { fill: rgba(88,166,255,0.12); stroke: var(--general); }
+    .node.output { fill: #1c2128; stroke: var(--muted); }
+    .node-text {
+      fill: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+    .node-sub {
+      fill: var(--muted);
+      font-size: 10px;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+    .arrow {
+      fill: none;
+      stroke: var(--muted);
+      stroke-width: 1.5;
+      marker-end: url(#arrowhead);
+    }
+    .arrow.rag { stroke: var(--rag); }
+    .arrow.no-rag { stroke: var(--no-rag); }
+    .arrow.general { stroke: var(--general); }
+    .label-path {
+      fill: var(--muted);
+      font-size: 9px;
+    }
+  </style>
+</head>
+<body>
+  <h1>RAG 프로젝트 · 질문 처리 과정</h1>
+  <p class="subtitle">플로우차트: 사용자 질문 → 라우터 분기 → RAG / NO_RAG / GENERAL → 답변</p>
+
+  <div class="diagram-wrap">
+    <svg class="diagram" viewBox="0 0 720 580" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#8b949e" />
+        </marker>
+        <marker id="arrowhead-rag" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#3fb950" />
+        </marker>
+        <marker id="arrowhead-no-rag" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#d29922" />
+        </marker>
+        <marker id="arrowhead-general" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#58a6ff" />
+        </marker>
+      </defs>
+
+      <!-- 입력 -->
+      <rect class="node input" x="280" y="0" width="160" height="44" />
+      <text class="node-text" x="360" y="18">질문 + 대화 히스토리</text>
+      <text class="node-sub" x="360" y="32">question, history_pairs</text>
+
+      <!-- 화살표: 입력 → 라우터 -->
+      <path class="arrow" d="M 360 44 L 360 72" marker-end="url(#arrowhead)" />
+
+      <!-- 라우터 -->
+      <rect class="node router" x="240" y="72" width="240" height="44" />
+      <text class="node-text" x="360" y="90">라우터 (LLM 1회)</text>
+      <text class="node-sub" x="360" y="104">RAG / NO_RAG / GENERAL</text>
+
+      <!-- 라우터에서 세 갈래로 -->
+      <path class="arrow no-rag" d="M 280 116 L 140 116 L 140 200" marker-end="url(#arrowhead-no-rag)" />
+      <path class="arrow general" d="M 440 116 L 580 116 L 580 200" marker-end="url(#arrowhead-general)" />
+      <path class="arrow rag" d="M 360 116 L 360 156" marker-end="url(#arrowhead-rag)" />
+
+      <!-- NO_RAG 경로 -->
+      <rect class="node no-rag" x="40" y="200" width="200" height="52" />
+      <text class="node-text" x="140" y="218">NO_RAG</text>
+      <text class="node-sub" x="140" y="232">LLM (NO_RAG_PORTFOLIO)</text>
+      <text class="node-sub" x="140" y="244">검색 없이 답변</text>
+      <path class="arrow no-rag" d="M 140 252 L 140 310" marker-end="url(#arrowhead-no-rag)" />
+
+      <!-- GENERAL 경로 -->
+      <rect class="node general" x="480" y="200" width="200" height="52" />
+      <text class="node-text" x="580" y="218">GENERAL</text>
+      <text class="node-sub" x="580" y="232">LLM (GENERAL_SYSTEM)</text>
+      <text class="node-sub" x="580" y="244">포폴 무관 답변</text>
+      <path class="arrow general" d="M 580 252 L 580 310" marker-end="url(#arrowhead-general)" />
+
+      <!-- RAG 파이프라인 (세로) -->
+      <rect class="node rag" x="260" y="156" width="200" height="28" />
+      <text class="node-text" x="360" y="172">인덱스 로드 (FAISS + BM25)</text>
+
+      <path class="arrow rag" d="M 360 184 L 360 198" marker-end="url(#arrowhead-rag)" />
+      <rect class="node rag" x="260" y="198" width="200" height="28" />
+      <text class="node-text" x="360" y="214">Query Expansion</text>
+
+      <path class="arrow rag" d="M 360 226 L 360 240" marker-end="url(#arrowhead-rag)" />
+      <rect class="node rag" x="260" y="240" width="200" height="28" />
+      <text class="node-text" x="360" y="256">Hybrid Search (Dense+Sparse)</text>
+
+      <path class="arrow rag" d="M 360 268 L 360 282" marker-end="url(#arrowhead-rag)" />
+      <rect class="node rag" x="260" y="282" width="200" height="28" />
+      <text class="node-text" x="360" y="298">RRF 병합</text>
+
+      <path class="arrow rag" d="M 360 310 L 360 324" marker-end="url(#arrowhead-rag)" />
+      <rect class="node rag" x="260" y="324" width="200" height="28" />
+      <text class="node-text" x="360" y="340">Reranker (→ 상위 4개)</text>
+
+      <path class="arrow rag" d="M 360 352 L 360 366" marker-end="url(#arrowhead-rag)" />
+      <rect class="node rag" x="260" y="366" width="200" height="28" />
+      <text class="node-text" x="360" y="382">LLM (RAG_SYSTEM + context)</text>
+
+      <path class="arrow rag" d="M 360 394 L 360 510" marker-end="url(#arrowhead-rag)" />
+
+      <!-- NO_RAG, GENERAL → 출력 합류 -->
+      <path class="arrow no-rag" d="M 140 310 L 140 480 L 300 480 L 300 510" marker-end="url(#arrowhead-no-rag)" />
+      <path class="arrow general" d="M 580 310 L 580 480 L 420 480 L 420 510" marker-end="url(#arrowhead-general)" />
+
+      <!-- 출력 박스 -->
+      <rect class="node output" x="280" y="510" width="160" height="52" />
+      <text class="node-text" x="360" y="528">답변 + source_docs</text>
+      <text class="node-sub" x="360" y="544">answer, 참고 문서 목록</text>
+    </svg>
+  </div>
+</body>
+</html>

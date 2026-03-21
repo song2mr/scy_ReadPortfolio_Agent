@@ -34,14 +34,22 @@ def load_documents_local():
     if not portfolio_dir.exists():
         raise FileNotFoundError(f"포트폴리오 폴더가 없습니다: {portfolio_dir}")
 
+    word_files = []
+    pdf_files = []
     for path in sorted(portfolio_dir.iterdir()):
+        if not path.is_file():
+            continue
         if path.suffix.lower() == ".pdf":
+            pdf_files.append(path.name)
             loader = PyPDFLoader(str(path))
             docs.extend(loader.load())
         elif path.suffix.lower() in (".docx", ".doc"):
+            word_files.append(path.name)
             loader = Docx2txtLoader(str(path))
             docs.extend(loader.load())
 
+    print("  [로컬] 읽은 PDF:", pdf_files if pdf_files else "(없음)")
+    print("  [로컬] 읽은 Word(.doc/.docx):", word_files if word_files else "(없음)")
     if not docs:
         raise ValueError(f"문서가 없습니다. {portfolio_dir} 에 PDF 또는 DOCX를 넣어주세요.")
     return docs
@@ -63,10 +71,13 @@ def load_documents_from_drive():
             "google-api-python-client google-auth-httplib2 google-auth-oauthlib"
         )
     # drive.file 은 '앱이 연 파일'만 보임. 폴더 안 기존 문서를 보려면 drive.readonly 필요.
+    # document=Google Docs, sheet=Google 스프레드시트, pdf=PDF (업로드된 .docx는 Google Docs로 변환된 경우만 해당)
+    file_types = ["document", "sheet", "pdf"]
+    print(f"  [구글 드라이브] 로드 대상 file_types: {file_types} (document=Google Docs, sheet=스프레드시트, pdf=PDF)")
     kwargs = {
         "folder_id": folder_id,
         "recursive": config.GOOGLE_DRIVE_RECURSIVE,
-        "file_types": ["document", "sheet", "pdf"],
+        "file_types": file_types,
         "scopes": ["https://www.googleapis.com/auth/drive.readonly"],
     }
     if config.GOOGLE_DRIVE_CREDENTIALS_PATH:
@@ -80,6 +91,18 @@ def load_documents_from_drive():
             f"구글 드라이브 폴더에서 문서를 찾지 못했습니다. folder_id={folder_id} 를 확인하고, "
             "폴더에 Google Docs/스프레드시트/PDF가 있는지 확인하세요."
         )
+    # 로드된 파일 목록을 콘솔에 출력 (metadata.source 또는 파일명)
+    seen = set()
+    file_list = []
+    for d in docs:
+        src = (d.metadata.get("source") or d.metadata.get("title") or "").strip()
+        if src and src not in seen:
+            seen.add(src)
+            file_list.append(src)
+    print("  [구글 드라이브] 읽은 파일 목록 (문서별 1회씩):")
+    for i, name in enumerate(file_list, 1):
+        print(f"    {i}. {name}")
+    print(f"  [구글 드라이브] 총 {len(file_list)}개 파일, {len(docs)}개 페이지/문서 단위")
     return docs
 
 

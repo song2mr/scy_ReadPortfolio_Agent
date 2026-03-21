@@ -23,7 +23,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.messages import HumanMessage, AIMessage
 from sentence_transformers import CrossEncoder
 from rank_bm25 import BM25Okapi
@@ -430,6 +430,16 @@ ROUTER_PROMPT = """<task>
 </output>"""
 
 
+def _parse_route_output(raw: str) -> str:
+    """라우터 LLM 출력 문자열 → RAG | NO_RAG | GENERAL."""
+    r = (raw or "").strip().upper()
+    if "NO_RAG" in r or "NO RAG" in r:
+        return "NO_RAG"
+    if "GENERAL" in r:
+        return "GENERAL"
+    return "RAG"
+
+
 def _format_history_for_router(pairs: list, max_turns: int = 5, max_chars_per_turn: int = 200) -> str:
     """라우터용으로 최근 대화만 짧게 문자열화. 없으면 '(없음)'."""
     if not pairs:
@@ -451,30 +461,127 @@ def _safe_format(template: str, **kwargs: str) -> str:
     return template.format(**escaped)
 
 
+def _build_router_chain():
+    """LCEL: router_prompt | llm | StrOutputParser | parse_route. LangSmith에 라우터 단계·입출력 노출."""
+    llm = ChatOpenAI(
+        model=getattr(config, "OPENAI_MODEL_ROUTER", config.OPENAI_MODEL),
+        temperature=0,
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+    prompt = ChatPromptTemplate.from_messages([("human", ROUTER_PROMPT)])
+    return (
+        prompt
+        | llm
+        | StrOutputParser()
+        | RunnableLambda(_parse_route_output, name="parse_route")
+    ).with_config(run_name="router")
+
+
+def _build_query_expansion_chain():
+    """LCEL: expansion_prompt | llm | StrOutputParser | parse_queries. 입력 question → 출력 {question, chat_history, queries}."""
+    llm = ChatOpenAI(
+        model=getattr(config, "OPENAI_MODEL_ROUTER", config.OPENAI_MODEL),
+        temperature=0,
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+    prompt = ChatPromptTemplate.from_messages([("human", REFORMULATION_TEMPLATE)]).partial(
+        portfolio_topics=QUERY_EXPANSION_PORTFOLIO_TOPICS.strip()
+    )
+
+    def _parse_queries(state: dict) -> dict:
+        question = (state.get("question") or "").strip()
+        text = (state.get("expansion_text") or "").strip()
+        max_n = getattr(config, "QUERY_EXPANSION_MAX_SUB_QUERIES", 5)
+        if not text:
+            return {**state, "queries": [question]}
+        lines = []
+        for line in text.replace("\r", "\n").split("\n"):
+            line = re.sub(r"^[\d]+[.)]\s*", "", line).strip()
+            line = re.sub(r"^[-*]\s*", "", line).strip()
+            if line and len(line) > 2:
+                lines.append(line)
+        seen = set()
+        reformulated = []
+        for q in lines:
+            q_lower = q.lower().strip()
+            if q_lower != question.lower() and q_lower not in seen:
+                seen.add(q_lower)
+                reformulated.append(q)
+                if len(reformulated) >= max_n:
+                    break
+        queries = [question, *reformulated] if reformulated else [question]
+        return {**state, "queries": queries}
+
+    expansion_step = prompt | llm | StrOutputParser()
+    chain = (
+        RunnablePassthrough.assign(expansion_text=expansion_step)
+        | RunnableLambda(_parse_queries, name="parse_queries")
+    ).with_config(run_name="query_expansion")
+    return chain
+
+
+def _retrieve_step(state: dict) -> dict:
+    """LCEL 내부: question + queries → hybrid 검색, RRF, rerank 후 context/source_docs 추가. LangSmith에 검색 결과 노출."""
+    question = state.get("question") or ""
+    queries = state.get("queries") or [question]
+    try:
+        vs = _get_vectorstore()
+        bm25 = _get_bm25()
+    except Exception as e:
+        print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
+        return {**state, "context": "", "source_docs": [], "retrieved_preview": []}
+    dense_k = getattr(config, "HYBRID_DENSE_K", 10)
+    sparse_k = getattr(config, "HYBRID_SPARSE_K", 10)
+    merge_top_n = getattr(config, "HYBRID_MERGE_TOP_N", 15)
+    rankings = [_hybrid_retrieve(q, vs, bm25, dense_k, sparse_k, merge_top_n) for q in queries]
+    merged = _rrf_merge_multiple(rankings, top_n=merge_top_n)
+    source_docs = _rerank_docs(question, merged)
+    context = _format_docs(source_docs)
+    # LangSmith에서 "무슨 문서를 긁어왔는지" 보이도록 요약 추가
+    retrieved_preview = [(doc.page_content or "")[:300] for doc in source_docs]
+    return {
+        **state,
+        "context": context,
+        "source_docs": source_docs,
+        "retrieved_preview": retrieved_preview,
+    }
+
+
+def _build_retrieve_chain():
+    """LCEL: RunnableLambda(retrieve_step). 입력 {question, queries} → 출력에 context, source_docs, retrieved_preview 포함."""
+    return RunnableLambda(_retrieve_step, name="retrieve").with_config(run_name="retrieve")
+
+
+def _build_rag_generate_chain():
+    """LCEL: RAG prompt | llm | StrOutputParser. 입력 {question, chat_history, context, sub_queries} → answer."""
+    llm = ChatOpenAI(
+        model=config.OPENAI_MODEL,
+        temperature=0,
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", RAG_SYSTEM),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{question}"),
+    ])
+    return (prompt | llm | StrOutputParser()).with_config(run_name="generate")
+
+
 @traceable(name="router", run_type="chain")
 def _route_question(question: str, history_pairs: list | None = None) -> str:
-    """질문을 RAG / NO_RAG / GENERAL 중 하나로 분류 (대화 히스토리 참고, LLM 한 번 호출)."""
+    """질문을 RAG / NO_RAG / GENERAL 중 하나로 분류. LCEL router_chain 사용 (LangSmith 트레이스)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return "RAG"
     history_pairs = history_pairs or []
     history_text = _format_history_for_router(history_pairs)
     try:
-        router_model = getattr(config, "OPENAI_MODEL_ROUTER", config.OPENAI_MODEL)
-        llm = ChatOpenAI(model=router_model, temperature=0, api_key=api_key)
-        out = llm.invoke(
-            _safe_format(
-                ROUTER_PROMPT,
-                question=question[:500],
-                history_text=history_text[:2000],
-            )
-        ).content
-        raw = out.strip().upper()
-        if "NO_RAG" in raw or "NO RAG" in raw:
-            return "NO_RAG"
-        if "GENERAL" in raw:
-            return "GENERAL"
-        return "RAG"
+        router_chain = _build_router_chain()
+        out = router_chain.invoke({
+            "question": question[:500],
+            "history_text": history_text[:2000],
+        })
+        return out if out in ("RAG", "NO_RAG", "GENERAL") else "RAG"
     except Exception:
         return "RAG"
 
@@ -639,10 +746,27 @@ def get_chain():
     return chain, retriever
 
 
+def _build_full_rag_chain():
+    """LCEL: query_expansion | retrieve | generate. LangSmith에 각 단계·검색된 문서(retrieved_preview) 노출."""
+    return (
+        _build_query_expansion_chain()
+        | _build_retrieve_chain()
+        | RunnablePassthrough.assign(
+            answer=lambda s: _build_rag_generate_chain().invoke({
+                "question": s["question"],
+                "chat_history": s["chat_history"],
+                "context": s["context"],
+                "sub_queries": _format_sub_queries(s.get("queries")),
+            }),
+        )
+    ).with_config(run_name="rag")
+
+
 @traceable(name="rag")
 def get_answer(question: str, history_pairs: list | None = None):
     """
     질문에 대해 RAG 또는 LLM만 사용. 대화 히스토리 반영.
+    LCEL 구조(router | query_expansion | retrieve | generate)로 LangSmith에 단계·검색 문서 노출.
     Returns:
         tuple: (answer: str, source_docs: list) — 포폴 무관이면 source_docs는 []
     """
@@ -660,28 +784,22 @@ def get_answer(question: str, history_pairs: list | None = None):
         answer = _invoke_no_rag(question, chat_history, GENERAL_SYSTEM)
         return answer, []
 
-    # RAG → Query Expansion → Hybrid Search → RRF → Reranker → 답변
+    # RAG: LCEL query_expansion | retrieve | generate (LangSmith에 검색 내용·단계 노출)
     try:
-        vs = _get_vectorstore()
-        bm25 = _get_bm25()
+        full_rag = _build_full_rag_chain()
+        state0 = {"question": question, "chat_history": chat_history}
+        result = full_rag.invoke(state0)
     except Exception as e:
         print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
         return "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
-    dense_k = getattr(config, "HYBRID_DENSE_K", 10)
-    sparse_k = getattr(config, "HYBRID_SPARSE_K", 10)
-    merge_top_n = getattr(config, "HYBRID_MERGE_TOP_N", 15)
-    queries = _expand_query(question)
-    rankings = [_hybrid_retrieve(q, vs, bm25, dense_k, sparse_k, merge_top_n) for q in queries]
-    merged = _rrf_merge_multiple(rankings, top_n=merge_top_n)
-    source_docs = _rerank_docs(question, merged)
-    context = _format_docs(source_docs)
-    answer = _generate_with_context(question, context, chat_history, sub_queries=queries)
+
+    source_docs = result.get("source_docs") or []
+    answer = result.get("answer") or ""
+    if not source_docs and not (result.get("context") or "").strip():
+        return "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
 
     # 평가 후 재시도: Faithfulness/Relevance 낮으면 k 늘려 1회만 재검색·재생성
-    if (
-        getattr(config, "EVAL_RETRY_ENABLED", False)
-        and source_docs
-    ):
+    if getattr(config, "EVAL_RETRY_ENABLED", False) and source_docs:
         eval_result = evaluate_response_from_docs(question, source_docs, answer)
         f = eval_result.get("faithfulness_score")
         r = eval_result.get("relevance_score")
@@ -689,13 +807,19 @@ def get_answer(question: str, history_pairs: list | None = None):
         min_r = getattr(config, "EVAL_MIN_RELEVANCE", 3)
         if (f is not None and f < min_f) or (r is not None and r < min_r):
             try:
-                retry_rankings = [_hybrid_retrieve(q, vs, bm25, dense_k + 5, sparse_k + 5, merge_top_n) for q in queries]
+                vs = _get_vectorstore()
+                bm25 = _get_bm25()
+                queries = result.get("queries") or [question]
+                dense_k = getattr(config, "HYBRID_DENSE_K", 10) + 5
+                sparse_k = getattr(config, "HYBRID_SPARSE_K", 10) + 5
+                merge_top_n = getattr(config, "HYBRID_MERGE_TOP_N", 15)
+                retry_rankings = [_hybrid_retrieve(q, vs, bm25, dense_k, sparse_k, merge_top_n) for q in queries]
                 merged_retry = _rrf_merge_multiple(retry_rankings, top_n=merge_top_n)
                 source_docs = _rerank_docs(question, merged_retry)
                 context = _format_docs(source_docs)
                 answer = _generate_with_context(question, context, chat_history, sub_queries=queries)
             except Exception:
-                pass  # 재시도 실패 시 첫 답변 유지
+                pass
 
     return answer, source_docs
 
@@ -704,7 +828,7 @@ def get_answer(question: str, history_pairs: list | None = None):
 def get_answer_stream(question: str, history_pairs: list | None = None):
     """
     질문에 대해 RAG 또는 LLM만 스트리밍. (full_answer_so_far, source_docs) 를 yield.
-    포폴 무관이면 source_docs는 [].
+    LCEL query_expansion | retrieve 사용 후 generate만 스트리밍 (LangSmith 트레이스).
     """
     if not (question or "").strip():
         yield "질문을 입력해 주세요.", []
@@ -725,46 +849,32 @@ def get_answer_stream(question: str, history_pairs: list | None = None):
             yield full, []
         return
 
-    # RAG → Query Expansion → Hybrid → RRF → Reranker → 스트리밍
+    # RAG: LCEL query_expansion | retrieve (트레이스) → generate 스트리밍
     try:
-        _debug("첫 RAG 요청: 인덱스 로드 중...")
-        vs = _get_vectorstore()
-        bm25 = _get_bm25()
-        _debug("인덱스 로드 완료")
-        dense_k = getattr(config, "HYBRID_DENSE_K", 10)
-        sparse_k = getattr(config, "HYBRID_SPARSE_K", 10)
-        merge_top_n = getattr(config, "HYBRID_MERGE_TOP_N", 15)
-        _debug("Query Expansion 중...")
-        queries = _expand_query(question)
-        _debug("Hybrid 검색 중...")
-        rankings = [_hybrid_retrieve(q, vs, bm25, dense_k, sparse_k, merge_top_n) for q in queries]
-        merged = _rrf_merge_multiple(rankings, top_n=merge_top_n)
-        source_docs = _rerank_docs(question, merged)
-        _debug(f"Rerank 후 문단 {len(source_docs)}개")
+        _debug("Query Expansion·검색 체인 실행...")
+        expansion_chain = _build_query_expansion_chain()
+        retrieve_chain = _build_retrieve_chain()
+        state0 = {"question": question, "chat_history": chat_history}
+        state1 = expansion_chain.invoke(state0)
+        state2 = retrieve_chain.invoke(state1)
+        source_docs = state2.get("source_docs") or []
+        context = state2.get("context") or ""
+        queries = state2.get("queries") or [question]
+        if not source_docs and not context.strip():
+            yield "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
+            return
+        _debug("LLM 스트리밍 시작...")
+        stream_chain = _build_rag_generate_chain()
+        full = ""
+        for chunk in stream_chain.stream({
+            "question": question,
+            "chat_history": chat_history,
+            "context": context,
+            "sub_queries": _format_sub_queries(queries),
+        }):
+            full += chunk
+            yield full, source_docs
     except Exception as e:
         print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
         yield "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
         return
-    context = _format_docs(source_docs)
-    sub_queries_str = _format_sub_queries(queries)
-    llm = ChatOpenAI(
-        model=config.OPENAI_MODEL,
-        temperature=0,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", RAG_SYSTEM),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{question}"),
-    ])
-    stream_chain = prompt | llm | StrOutputParser()
-    full = ""
-    _debug("LLM 스트리밍 시작...")
-    for chunk in stream_chain.stream({
-        "question": question,
-        "context": context,
-        "chat_history": chat_history,
-        "sub_queries": sub_queries_str,
-    }):
-        full += chunk
-        yield full, source_docs

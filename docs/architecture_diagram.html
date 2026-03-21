@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG 전체 아키텍처</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --blue: #58a6ff;
+      --purple: #a371f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.35rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+    .diagram-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      overflow: auto;
+    }
+    svg { display: block; }
+    .layer-label {
+      fill: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .node {
+      fill: var(--card);
+      stroke: var(--border);
+      stroke-width: 1.5;
+      rx: 6;
+    }
+    .node.user { fill: #1c2128; stroke: var(--blue); }
+    .node.app { fill: rgba(88,166,255,0.1); stroke: var(--blue); }
+    .node.rag { fill: rgba(63,185,80,0.1); stroke: var(--green); }
+    .node.data { fill: rgba(163,113,247,0.1); stroke: var(--purple); }
+    .node.build { fill: rgba(210,153,34,0.1); stroke: var(--yellow); }
+    .node.ext { fill: #1c2128; stroke: var(--muted); }
+    .node-text { fill: var(--text); font-size: 11px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+    .node-sub { fill: var(--muted); font-size: 9px; text-anchor: middle; dominant-baseline: middle; }
+    .arrow { fill: none; stroke: var(--muted); stroke-width: 1.2; marker-end: url(#arrow); }
+    .arrow.dash { stroke-dasharray: 4 3; }
+  </style>
+</head>
+<body>
+  <h1>RAG 프로젝트 · 전체 아키텍처</h1>
+  <p class="subtitle">데이터 소스 → 인덱스 빌드 → 런타임(UI·RAG·인덱스) → 외부 API</p>
+
+  <div class="diagram-wrap">
+    <svg viewBox="0 0 800 520" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto">
+          <polygon points="0 0, 6 2.5, 0 5" fill="#8b949e" />
+        </marker>
+      </defs>
+
+      <!-- 레이어: 사용자 -->
+      <text class="layer-label" x="20" y="22">사용자</text>
+      <rect class="node user" x="320" y="32" width="160" height="36" />
+      <text class="node-text" x="400" y="48">인사 담당자</text>
+      <text class="node-sub" x="400" y="60">브라우저에서 채팅</text>
+
+      <!-- 레이어: 프레젠테이션 -->
+      <text class="layer-label" x="20" y="92">프레젠테이션</text>
+      <rect class="node app" x="300" y="100" width="200" height="44" />
+      <text class="node-text" x="400" y="118">Gradio 앱 (app/app.py)</text>
+      <text class="node-sub" x="400" y="132">채팅 UI, 추천 질문, 요약 다운로드</text>
+      <path class="arrow" d="M 400 68 L 400 100" />
+
+      <!-- 레이어: 핵심 로직 -->
+      <text class="layer-label" x="20" y="168">핵심 로직</text>
+      <rect class="node rag" x="80" y="176" width="240" height="80" />
+      <text class="node-text" x="200" y="194">app/rag.py</text>
+      <text class="node-sub" x="200" y="208">라우터 → RAG / NO_RAG / GENERAL</text>
+      <text class="node-sub" x="200" y="222">Query 확장 · Hybrid · RRF · Reranker · LLM</text>
+      <text class="node-sub" x="200" y="236">get_answer / get_answer_stream</text>
+
+      <rect class="node rag" x="480" y="176" width="240" height="80" />
+      <text class="node-text" x="600" y="194">app/rag_eval.py</text>
+      <text class="node-sub" x="600" y="208">Faithfulness · Relevance 평가</text>
+      <text class="node-sub" x="600" y="222">재시도 시 k 증가 후 재검색</text>
+
+      <path class="arrow" d="M 400 144 L 250 144 L 250 176" />
+      <path class="arrow" d="M 320 216 L 480 216" />
+
+      <!-- 레이어: 데이터·설정 -->
+      <text class="layer-label" x="20" y="282">데이터 · 설정</text>
+      <rect class="node data" x="40" y="290" width="140" height="52" />
+      <text class="node-text" x="110" y="306">config.py</text>
+      <text class="node-sub" x="110" y="320">경로, k, 모델명, 청킹</text>
+
+      <rect class="node data" x="200" y="290" width="160" height="52" />
+      <text class="node-text" x="280" y="306">index/</text>
+      <text class="node-sub" x="280" y="320">index.faiss, index.pkl</text>
+      <text class="node-sub" x="280" y="332">bm25_corpus.pkl, bm25_docs.pkl</text>
+
+      <rect class="node data" x="380" y="290" width="120" height="52" />
+      <text class="node-text" x="440" y="306">.env</text>
+      <text class="node-sub" x="440" y="320">OPENAI_API_KEY</text>
+      <text class="node-sub" x="440" y="332">HF_INDEX_DATASET 등</text>
+
+      <rect class="node data" x="520" y="290" width="260" height="52" />
+      <text class="node-text" x="650" y="306">데이터 소스 (빌드 시)</text>
+      <text class="node-sub" x="650" y="320">data/portfolio (PDF, DOCX)</text>
+      <text class="node-sub" x="650" y="332">또는 Google Drive (GOOGLE_DRIVE_FOLDER_ID)</text>
+
+      <path class="arrow dash" d="M 200 256 L 200 273 L 110 273 L 110 290" />
+      <path class="arrow dash" d="M 200 256 L 200 273 L 280 273 L 280 290" />
+      <path class="arrow dash" d="M 200 256 L 200 273 L 440 273 L 440 290" />
+
+      <!-- 레이어: 인덱스 빌드 -->
+      <text class="layer-label" x="20" y="368">인덱스 빌드 (오프라인)</text>
+      <rect class="node build" x="40" y="376" width="180" height="56" />
+      <text class="node-text" x="130" y="394">scripts/build_index.py</text>
+      <text class="node-sub" x="130" y="408">문서 로드 → 청킹</text>
+      <text class="node-sub" x="130" y="420">→ FAISS + BM25(Kiwi) → index/</text>
+
+      <path class="arrow dash" d="M 110 342 L 110 366 L 130 366 L 130 376" />
+      <path class="arrow" d="M 650 342 L 650 354 L 130 354 L 130 376" />
+      <path class="arrow" d="M 130 432 L 130 450 L 280 450 L 280 342" />
+
+      <!-- 레이어: 외부 서비스 -->
+      <text class="layer-label" x="20" y="458">외부 서비스</text>
+      <rect class="node ext" x="380" y="434" width="100" height="36" />
+      <text class="node-text" x="430" y="452">OpenAI API</text>
+      <text class="node-sub" x="430" y="462">라우터·답변·Query확장</text>
+
+      <rect class="node ext" x="500" y="434" width="180" height="36" />
+      <text class="node-text" x="590" y="452">Hugging Face</text>
+      <text class="node-sub" x="590" y="462">임베딩, Reranker, 인덱스 Dataset</text>
+
+      <path class="arrow dash" d="M 250 256 L 250 380 L 430 380 L 430 434" />
+      <path class="arrow dash" d="M 250 256 L 250 380 L 590 380 L 590 434" />
+    </svg>
+  </div>
+</body>
+</html>
