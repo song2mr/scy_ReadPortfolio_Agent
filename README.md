@@ -196,6 +196,7 @@ N은 `app/rag.py`의 `_pairs_to_messages(max_turns=5)`, `_format_history_for_rou
 │   ├── 코드_동작_설명.md
 │   └── *.html             # 아키텍처·질문 흐름 다이어그램
 ├── notebooks/             # 실험용 (예: test_rag.ipynb)
+├── .github/workflows/     # GitHub Actions (HF Space 동기화 등)
 └── .env                   # API 키 등 (git 제외)
 ```
 
@@ -214,16 +215,6 @@ uv run python scripts/evaluate_rag.py
 ## 배포 (Hugging Face Spaces)
 
 무료 계정으로 **Private** Space를 만들어 다른 사람이 보지 못하게 배포할 수 있습니다. (무료 private 저장 100GB 이내, CPU Basic 하드웨어 무료.)
-
-### GitHub → Space 자동 동기화 (Actions)
-
-`main`에 푸시하면 [Hugging Face Space **chanyoung12/BoradGameRule_RAG**](https://huggingface.co/spaces/chanyoung12/BoradGameRule_RAG)로 동기화합니다. ([공식 가이드](https://huggingface.co/docs/hub/spaces-github-actions))
-
-1. GitHub 저장소 **Settings → Secrets and variables → Actions**에서 **New repository secret**으로 **`HF_TOKEN`**을 추가합니다.  
-   - 토큰은 Hugging Face [Settings → Access Tokens](https://huggingface.co/settings/tokens)에서 발급하고, Space에 푸시할 수 있도록 **쓰기 권한**이 있는 토큰을 쓰세요.
-2. `git push origin main` 후 **Actions** 탭에서 **Sync to Hugging Face Space** 워크플로가 성공하는지 확인합니다.
-
-**참고**: 10MB를 넘는 파일은 Spaces에 올릴 때 [Git LFS](https://huggingface.co/docs/hub/spaces-github-actions)가 필요합니다. PR에는 `.github/workflows/check-file-size.yml`로 크기 경고가 붙습니다.
 
 ### 1. Space 만들기
 
@@ -280,6 +271,18 @@ Git이 `index.faiss` 등 바이너리 푸시를 거절할 수 있으면, **Datas
 | 진입점 | 루트 `app.py`. |
 | API 키 | **Settings → Secrets**에 `OPENAI_API_KEY`. |
 | 인덱스 | Dataset에 파일 업로드 후 `HF_INDEX_DATASET`, 필요 시 `HF_TOKEN`. |
+
+### 7. GitHub → Hugging Face 자동 동기화 (Actions)
+
+GitHub `main`에 푸시할 때마다 같은 브랜치를 Space [`chanyoung12/scy_ReadPortfolio_agent`](https://huggingface.co/spaces/chanyoung12/scy_ReadPortfolio_agent)로 미러링하려면 [Hugging Face 가이드](https://huggingface.co/docs/hub/spaces-github-actions)와 동일한 방식으로 **Repository secret**을 등록합니다.
+
+1. [Hugging Face 설정 → Access Tokens](https://huggingface.co/settings/tokens)에서 **쓰기(Write)** 권한이 있는 토큰을 발급합니다.
+2. GitHub 저장소 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+   - Name: `HF_TOKEN`
+   - Value: 위 HF 토큰
+3. 이후 `git push origin main`이 올라가면 워크플로 **Sync to Hugging Face Space**가 실행되어 Space 저장소로 `main`이 푸시됩니다. (Actions 탭에서 **Run workflow**로 수동 실행도 가능)
+
+10MB를 넘는 파일은 Space 정책상 [Git LFS](https://huggingface.co/docs/hub/spaces-github-actions) 사용을 검토하세요. PR에는 `.github/workflows/check-file-size.yml`로 크기 경고가 뜹니다.
 
 ---
 
