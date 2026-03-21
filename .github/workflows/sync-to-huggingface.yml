@@ -1,8 +1,9 @@
-# Hugging Face Spaces와 GitHub 저장소 동기화
+# Hugging Face Spaces ← GitHub main 동기화
 # https://huggingface.co/docs/hub/spaces-github-actions
+# https://huggingface.co/blog/password-git-deprecation
 #
-# 사용 전: GitHub 저장소 Settings → Secrets and variables → Actions
-# 에서 Repository secret 이름 HF_TOKEN 값으로 Hugging Face API 토큰(쓰기 권한)을 등록하세요.
+# GitHub Secrets → HF_TOKEN = HF 설정의 User Access Token (계정 비밀번호 아님)
+# https://huggingface.co/settings/tokens — Write 권한(또는 해당 Space에 쓰기)
 
 name: Sync to Hugging Face Space
 
@@ -20,8 +21,41 @@ jobs:
           fetch-depth: 0
           lfs: true
 
+      # 셸에 토큰을 직접 넣으면 특수문자/빈 값 때문에 "password auth" 오류가 나기 쉬움.
+      # Python으로 URL 인코딩 후 git push (HF는 User Access Token을 비밀번호 자리에 사용)
       - name: Push to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git push https://chanyoung12:${HF_TOKEN}@huggingface.co/spaces/chanyoung12/scy_ReadPortfolio_agent main
+          pip install --quiet "huggingface_hub>=0.23.0"
+          python << 'PY'
+          import os
+          import subprocess
+          import sys
+          import urllib.parse
+
+          from huggingface_hub import login
+
+          token = (os.environ.get("HF_TOKEN") or "").strip()
+          if not token:
+              print("::error::HF_TOKEN secret is empty or missing in GitHub Actions secrets.")
+              sys.exit(1)
+
+          # Git credential에도 등록 (일부 환경에서 push 보조)
+          login(token=token, add_to_git_credential=True, write_permission=True)
+
+          user = "chanyoung12"
+          repo_path = "spaces/chanyoung12/scy_ReadPortfolio_agent"
+          # 토큰에 +, /, @ 등이 있어도 안전하게 전달
+          enc = urllib.parse.quote(token, safe="")
+          remote = f"https://{user}:{enc}@huggingface.co/{repo_path}"
+
+          r = subprocess.run(["git", "push", remote, "main"], check=False)
+          if r.returncode != 0:
+              print(
+                  "::error::Push failed. HF_TOKEN must be a User Access Token from "
+                  "https://huggingface.co/settings/tokens (not your login password), "
+                  "with write access to the Space repo."
+              )
+          sys.exit(r.returncode)
+          PY
