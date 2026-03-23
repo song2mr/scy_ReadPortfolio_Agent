@@ -44,5 +44,9 @@ QUERY_EXPANSION_MAX_SUB_QUERIES = 5  # 포괄적 질문 시 하위 질문 최대
 EMBEDDING_MODEL = "jhgan/ko-sroberta-multitask"
 
 # LLM
-OPENAI_MODEL = "gpt-5"         # 답변 생성(RAG·NO_RAG·GENERAL)용 (실제 사용 모델명으로 설정. 예: gpt-4o) 
+OPENAI_MODEL = "gpt-5"         # 답변 생성(RAG·NO_RAG·GENERAL)용 (실제 사용 모델명으로 설정. 예: gpt-4o)
 OPENAI_MODEL_ROUTER = "gpt-4o-mini"   # 라우터(RAG/NO_RAG/GENERAL 분류)용. 가벼운 모델로 두면 비용·지연 감소
+
+# 대화 히스토리
+MAX_HISTORY_TURNS = 5      # LLM에 전달하는 최근 대화 최대 턴 수
+RETRY_K_INCREMENT = 5      # 평가 재시도 시 dense_k / sparse_k 증가량

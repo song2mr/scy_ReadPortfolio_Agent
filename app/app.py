@@ -187,6 +187,21 @@ def _build_transcript(history: list) -> str:
     return "\n".join(lines)
 
 
+_SUMMARY_PROMPT = "다음 포트폴리오 Q&A 대화를 마크다운을 적절히 사용해서 가독성 있게 요약해 주세요. 지원자의 이력서, 포트폴리오를 작성한다고 가정하세요. 한국어로만 작성하고, 지원자 관점이 아니라 인사 담당자가 읽을 요약으로 작성하세요.\n\n"
+
+
+def _generate_summary_text(transcript: str) -> str:
+    """대화 전사를 LLM으로 요약. API 키 없거나 실패 시 기본 메시지 반환."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "대화 내용이 없거나 요약할 수 없습니다."
+    try:
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=api_key)
+        return llm.invoke(_SUMMARY_PROMPT + transcript[:8000]).content
+    except Exception:
+        return "(요약 생성 중 오류가 발생했습니다.)"
+
+
 def _generate_summary_file(history: list) -> str | None:
     """대화 요약 + 전체 내역을 마크다운 파일로 저장하고 경로 반환. 다운로드용."""
     if not history or _stats_from_history(history) == (0, 0):
@@ -194,16 +209,7 @@ def _generate_summary_file(history: list) -> str | None:
     transcript = _build_transcript(history)
     if not transcript.strip():
         return None
-    summary = "대화 내용이 없거나 요약할 수 없습니다."
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=api_key)
-            summary = llm.invoke(
-                "다음 포트폴리오 Q&A 대화를 마크다운을 적절히 사용해서 가독성 있게 요약해 주세요. 지원자의 이력서, 포트폴리오를 작성한다고 가정하세요. 한국어로만 작성하고, 지원자 관점이 아니라 인사 담당자가 읽을 요약으로 작성하세요.\n\n" + transcript[:8000]
-            ).content
-        except Exception:
-            summary = "(요약 생성 중 오류가 발생했습니다.)"
+    summary = _generate_summary_text(transcript)
     content = f"""# 포트폴리오 대화 요약
 생성 시각: {datetime.now().strftime("%Y-%m-%d %H:%M")}
 
@@ -241,16 +247,7 @@ def _generate_summary_pdf_or_txt(history: list) -> tuple[str, str]:
     transcript = _build_transcript(history)
     if not transcript.strip():
         return None, ""
-    summary = "대화 내용이 없거나 요약할 수 없습니다."
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=api_key)
-            summary = llm.invoke(
-                "다음 포트폴리오 Q&A 대화를 마크다운을 적절히 사용해서 가독성 있게 요약해 주세요. 지원자의 이력서, 포트폴리오를 작성한다고 가정하세요. 한국어로만 작성하고, 지원자 관점이 아니라 인사 담당자가 읽을 요약으로 작성하세요.\n\n" + transcript[:8000]
-            ).content
-        except Exception:
-            pass
+    summary = _generate_summary_text(transcript)
     text_content = f"포트폴리오 대화 요약\n생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n## 요약\n{summary}\n\n---\n## 전체 대화\n{transcript}"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     try:

@@ -29,6 +29,7 @@ from sentence_transformers import CrossEncoder
 from rank_bm25 import BM25Okapi
 
 from app.rag_eval import evaluate_response_from_docs
+from data.candidate_profile import PROFILE_BASIC, QUERY_EXPANSION_TOPICS
 
 # LangSmith: RAG 단계(라우터, Query Expansion, Hybrid Search, Rerank 등)를 트레이스에 단계별로 보이게 함
 try:
@@ -57,7 +58,7 @@ def _strip_html(text) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def _pairs_to_messages(pairs: list, max_turns: int = 5) -> list:
+def _pairs_to_messages(pairs: list, max_turns: int = config.MAX_HISTORY_TURNS) -> list:
     """대화 pairs [[user,bot],...] → LangChain 메시지 리스트 (최근 max_turns턴만)."""
     if not pairs:
         return []
@@ -220,23 +221,7 @@ def _get_bm25():
 
 
 # Query Expansion: 질문만으로 LLM 재작성 (1차 검색 없음. 단일/포괄적 질문 → 1개 또는 여러 하위 쿼리)
-# 포트폴리오·경험 조회 시 쿼리 재작성에 참고할 프로젝트·솔루션 목록 (구체적 키워드로 활용)
-QUERY_EXPANSION_PORTFOLIO_TOPICS = """
-## 생성형 AI 프로젝트
-- 머신러닝을 활용한 낙동강 유해남조류 발생 예측
-- 로그 트래킹 스크립트, SEO & AEO 컨설팅 및 설계
-- MS Copilot Studio AI 사용 정책 수립
-
-## 자동화 솔루션 및 머신러닝 모델 개발
-- 애드메이커: 광고 자동 생성 시스템 구축
-- 광고 데드페이지 실시간 모니터링 시스템 개발
-- 예산 소진 예측 모델 설계(SageMaker)
-- 마케팅 데이터 ETL 파이프라인 구축
-- 포트폴리오 에이전트(개인 프로젝트)
-- 광고 데이터 분석 챗봇 설계
-- 사내 솔루션 Q&A 챗봇 설계
-- ChatGPT를 이용한 광고 소재 제작 솔루션
-"""
+# 포트폴리오·경험 조회 시 쿼리 재작성에 참고할 프로젝트·솔루션 목록은 data/candidate_profile.py 에 정의
 
 REFORMULATION_TEMPLATE = """<role>
 당신은 지원자 포트폴리오 문서 검색을 위한 쿼리 재작성 전문가입니다. 사용자 질문을 검색에 유리하도록 재작성합니다. 동의어·구체적 키워드·관련 개념을 넣어도 됩니다.
@@ -302,7 +287,7 @@ def _expand_query(question: str) -> list:
         prompt = _safe_format(
             REFORMULATION_TEMPLATE,
             question=question[:500],
-            portfolio_topics=QUERY_EXPANSION_PORTFOLIO_TOPICS.strip(),
+            portfolio_topics=QUERY_EXPANSION_TOPICS.strip(),
         )
         out = llm.invoke(prompt).content.strip()
         if not out:
@@ -440,7 +425,7 @@ def _parse_route_output(raw: str) -> str:
     return "RAG"
 
 
-def _format_history_for_router(pairs: list, max_turns: int = 5, max_chars_per_turn: int = 200) -> str:
+def _format_history_for_router(pairs: list, max_turns: int = config.MAX_HISTORY_TURNS, max_chars_per_turn: int = 200) -> str:
     """라우터용으로 최근 대화만 짧게 문자열화. 없으면 '(없음)'."""
     if not pairs:
         return "(없음)"
@@ -485,7 +470,7 @@ def _build_query_expansion_chain():
         api_key=os.getenv("OPENAI_API_KEY"),
     )
     prompt = ChatPromptTemplate.from_messages([("human", REFORMULATION_TEMPLATE)]).partial(
-        portfolio_topics=QUERY_EXPANSION_PORTFOLIO_TOPICS.strip()
+        portfolio_topics=QUERY_EXPANSION_TOPICS.strip()
     )
 
     def _parse_queries(state: dict) -> dict:
@@ -586,25 +571,7 @@ def _route_question(question: str, history_pairs: list | None = None) -> str:
         return "RAG"
 
 
-# 지원자 기본 정보 (시스템 프롬프트에 포함 — RAG 검색 보조)
-PROFILE_BASIC = """
-#경력 사항
-2023.01~04 에코마케팅 인턴
-2024.01~현재 이엠넷, R&D본부: 진행 중
-#활동 내역
-2026.02~현재 모두의연구소 AI/LLM 서비스 개발 과정: 진행 중
-2023.06~12 QMS 데이터 분석 학회: 끝
-2023.02 KCI 논문 등재(1저자)
-2022.06~08 데이터청년캠퍼스: 끝
-2021.01~03 네이버게임 서포터즈: 끝
-#소프트웨어
-Python R Java Script GA SQL Google Big Query C# Looker Studio
-#학력 사항
-2018.03 한국외국어 대학교 서울캠퍼스 ~ 2024.06 광고PR브랜딩/통계학과 졸업 (3.92/4.5)
-#강점 (짤막 요약)
-- 로그 트래킹·SEO/AEO 수집 설계, ETL 파이프라인, ML·RAG 활용까지 데이터 전체 라이프사이클을 끊김 없이 연결해 와서, 병목 지점을 구조적으로 판단할 수 있음.
-- LLM을 챗봇·생성형 콘텐츠·자동화 등 실무에 적용한 설계·운영 경험이 있으며, 어디에 AI를 쓰면 의미 있고 어디선 복잡해지는지 시행착오로 학습함.
-"""
+# 지원자 기본 정보는 data/candidate_profile.py 에서 PROFILE_BASIC 으로 임포트
 
 # 시스템 프롬프트: 송찬영을 인사 담당자에게 소개하는 에이전트 (송찬영 = 데이터 분석가·LLM 에이전트 개발·설계자)
 RAG_SYSTEM = """<role>당신은 송찬영을 인사·채용 담당자에게 소개하는 에이전트입니다. 지원자 송찬영은 데이터 분석가이자 LLM 에이전트 개발·설계자입니다. 당신은 그 포지션의 어시스턴트가 아니라, 인사 담당자가 질문하면 송찬영의 포트폴리오(이력서·경력기술서·프로젝트)를 RAG로 검색해 답변하는 소개용 에이전트입니다.</role>
@@ -810,8 +777,8 @@ def get_answer(question: str, history_pairs: list | None = None):
                 vs = _get_vectorstore()
                 bm25 = _get_bm25()
                 queries = result.get("queries") or [question]
-                dense_k = getattr(config, "HYBRID_DENSE_K", 10) + 5
-                sparse_k = getattr(config, "HYBRID_SPARSE_K", 10) + 5
+                dense_k = getattr(config, "HYBRID_DENSE_K", 10) + config.RETRY_K_INCREMENT
+                sparse_k = getattr(config, "HYBRID_SPARSE_K", 10) + config.RETRY_K_INCREMENT
                 merge_top_n = getattr(config, "HYBRID_MERGE_TOP_N", 15)
                 retry_rankings = [_hybrid_retrieve(q, vs, bm25, dense_k, sparse_k, merge_top_n) for q in queries]
                 merged_retry = _rrf_merge_multiple(retry_rankings, top_n=merge_top_n)
