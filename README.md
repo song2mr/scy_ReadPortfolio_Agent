@@ -1,3 +1,15 @@
+---
+title: scy ReadPortfolio Agent
+emoji: 📄
+colorFrom: indigo
+colorTo: blue
+sdk: gradio
+sdk_version: "6.5.1"
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # scy_Rag - Portfolio RAG Chatbot
 
 <div align="center">
