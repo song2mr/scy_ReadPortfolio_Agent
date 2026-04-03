@@ -520,7 +520,7 @@ def build_ui():
                     )
                     job_title_in = gr.Textbox(
                         label="평가할 직무",
-                        placeholder="예: 데이터 분석가 (광고·마케팅 도메인), LLM 에이전트 엔지니어",
+                        placeholder="예: LLM 에이전트 엔지니어",
                         lines=2,
                         elem_classes=["job-input"],
                     )
