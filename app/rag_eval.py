@@ -18,6 +18,7 @@ import config
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
 
 
 EVAL_PROMPT = """<role>당신은 RAG(검색 기반 답변) 품질을 평가하는 평가자입니다.</role>
@@ -71,6 +72,22 @@ def _parse_eval_output(text: str) -> dict:
     return out
 
 
+def build_evaluation_chain(model: str | None = None):
+    """Faithfulness / Relevance 평가용 LCEL. LangSmith에서 `rag_quality_eval` 단계로 표시."""
+    prompt = ChatPromptTemplate.from_template(EVAL_PROMPT)
+    llm = ChatOpenAI(
+        model=model or config.OPENAI_MODEL,
+        temperature=0,
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+
+    def _parse_msg(msg) -> dict:
+        text = msg.content if hasattr(msg, "content") else str(msg)
+        return _parse_eval_output(text)
+
+    return (prompt | llm | RunnableLambda(_parse_msg)).with_config(run_name="rag_quality_eval")
+
+
 def evaluate_response(
     query: str,
     context: str,
@@ -101,17 +118,13 @@ def evaluate_response(
     # 문단/답변이 너무 길면 자르기
     context_trim = context.strip()[:6000] if context else "(없음)"
     answer_trim = answer.strip()[:3000] if answer else "(없음)"
-    prompt = ChatPromptTemplate.from_template(EVAL_PROMPT)
-    llm = ChatOpenAI(model=model, temperature=0, api_key=api_key)
-    chain = prompt | llm
     try:
-        result = chain.invoke({
+        chain = build_evaluation_chain(model=model)
+        return chain.invoke({
             "query": query,
             "context": context_trim,
             "answer": answer_trim,
         })
-        text = result.content if hasattr(result, "content") else str(result)
-        return _parse_eval_output(text)
     except Exception as e:
         return {
             "faithfulness_score": None,

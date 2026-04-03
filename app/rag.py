@@ -23,13 +23,13 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnableBranch, RunnablePassthrough, RunnableLambda
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 from rank_bm25 import BM25Okapi
 
-from app.rag_eval import evaluate_response_from_docs
+from app.rag_eval import build_evaluation_chain
 from data.candidate_profile import PROFILE_BASIC, QUERY_EXPANSION_TOPICS
 
 # LangSmith: RAG 단계(라우터, Query Expansion, Hybrid Search, Rerank 등)를 트레이스에 단계별로 보이게 함
@@ -733,7 +733,6 @@ def _rag_scope_heuristic_broad(question: str) -> bool:
     return any(re.search(p, q) for p in patterns)
 
 
-@traceable(name="rag_scope", run_type="chain")
 def _classify_rag_scope(question: str, history_pairs: list | None = None) -> str:
     """BROAD=요약만 여러 파일, SINGLE=요약으로 고른 1파일 본문 전부 (고유 소스 개수와 무관)."""
     if not getattr(config, "RAG_SUMMARY_ROUTING_ENABLED", True):
@@ -973,6 +972,15 @@ def _build_retrieve_chain():
     return RunnableLambda(_retrieve_step, name="retrieve").with_config(run_name="retrieve")
 
 
+def _build_rag_retrieve_pipeline():
+    """Query Expansion → rag_scope → Hybrid 검색·리랭크·컨텍스트 조립. LangSmith: `rag_retrieve_pipeline`."""
+    return (
+        _build_query_expansion_chain()
+        | RunnableLambda(_rag_scope_step, name="rag_scope_step")
+        | _build_retrieve_chain()
+    ).with_config(run_name="rag_retrieve_pipeline")
+
+
 def _build_rag_generate_chain():
     """LCEL: RAG prompt | llm | StrOutputParser. 입력 {question, chat_history, context, sub_queries} → answer."""
     llm = ChatOpenAI(
@@ -988,23 +996,13 @@ def _build_rag_generate_chain():
     return (prompt | llm | StrOutputParser()).with_config(run_name="generate")
 
 
-@traceable(name="router", run_type="chain")
 def _route_question(question: str, history_pairs: list | None = None) -> str:
-    """질문을 RAG / NO_RAG / GENERAL 중 하나로 분류. LCEL router_chain 사용 (LangSmith 트레이스)."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return "RAG"
-    history_pairs = history_pairs or []
-    history_text = _format_history_for_router(history_pairs)
-    try:
-        router_chain = _build_router_chain()
-        out = router_chain.invoke({
-            "question": question[:500],
-            "history_text": history_text[:2000],
-        })
-        return out if out in ("RAG", "NO_RAG", "GENERAL") else "RAG"
-    except Exception:
-        return "RAG"
+    """질문을 RAG / NO_RAG / GENERAL 로 분류 (평가·스크립트 호환). 실제 앱은 LCEL `router_assign` 사용."""
+    st = _build_entry_runnable().invoke({"question": question or "", "history_pairs": history_pairs or []})
+    if not st.get("question"):
+        return "NO_RAG"
+    st2 = _build_router_assign_runnable().invoke(st)
+    return st2.get("route") or "RAG"
 
 
 # 지원자 기본 정보는 data/candidate_profile.py 에서 PROFILE_BASIC 으로 임포트
@@ -1066,7 +1064,184 @@ def _format_sub_queries(sub_queries: list | None) -> str:
     return "\n".join(f"{i+1}. {q.strip()}" for i, q in enumerate(sub_queries) if (q or "").strip())
 
 
-@traceable(name="generate_with_context", run_type="chain")
+def _prepare_rag_generate_input(state: dict) -> dict:
+    """retrieve_pipeline 출력 state → RAG 생성 프롬프트 입력."""
+    return {
+        "question": state["question"],
+        "chat_history": state["chat_history"],
+        "context": state["context"],
+        "sub_queries": _format_sub_queries(state.get("queries")),
+    }
+
+
+def _build_rag_gen_pipe():
+    """prepare_rag_generate | generate. LangSmith: `rag_generate_pipe`."""
+    prep = RunnableLambda(_prepare_rag_generate_input, name="prepare_rag_generate").with_config(
+        run_name="prepare_rag_generate"
+    )
+    return (prep | _build_rag_generate_chain()).with_config(run_name="rag_generate_pipe")
+
+
+def _eval_retry_step(state: dict) -> dict:
+    """Faithfulness/Relevance 낮을 때 검색 k 증가 후 1회 재생성. `rag_quality_eval` LCEL 사용."""
+    if not getattr(config, "EVAL_RETRY_ENABLED", False):
+        return state
+    answer = state.get("answer") or ""
+    source_docs = state.get("source_docs") or []
+    question = state.get("question") or ""
+    chat_history = state.get("chat_history") or []
+    if not source_docs:
+        return state
+    context = "\n\n---\n\n".join(doc.page_content for doc in source_docs)
+    eval_chain = build_evaluation_chain()
+    eval_result = eval_chain.invoke({
+        "query": question,
+        "context": context.strip()[:6000] if context else "(없음)",
+        "answer": answer.strip()[:3000] if answer else "(없음)",
+    })
+    f = eval_result.get("faithfulness_score")
+    r = eval_result.get("relevance_score")
+    min_f = getattr(config, "EVAL_MIN_FAITHFULNESS", 3)
+    min_r = getattr(config, "EVAL_MIN_RELEVANCE", 3)
+    if (f is not None and f < min_f) or (r is not None and r < min_r):
+        try:
+            queries = state.get("queries") or [question]
+            dk = getattr(config, "HYBRID_DENSE_K", 10) + config.RETRY_K_INCREMENT
+            sk = getattr(config, "HYBRID_SPARSE_K", 10) + config.RETRY_K_INCREMENT
+            mn = getattr(config, "HYBRID_MERGE_TOP_N", 15)
+            rag_scope = state.get("rag_scope") or "SINGLE"
+            source_docs, context2, _ = _run_retrieval_core(
+                question, queries, rag_scope, dense_k=dk, sparse_k=sk, merge_top_n=mn
+            )
+            gen = _build_rag_generate_chain()
+            new_answer = gen.invoke({
+                "question": question,
+                "chat_history": chat_history,
+                "context": context2,
+                "sub_queries": _format_sub_queries(queries),
+            })
+            return {**state, "answer": new_answer, "source_docs": source_docs, "eval_retry_applied": True}
+        except Exception:
+            return state
+    return state
+
+
+def _rag_index_guard(state: dict) -> dict:
+    """인덱스 없음·검색 실패 시 안내 문구로 통일."""
+    if not state.get("source_docs") and not (state.get("context") or "").strip():
+        return {
+            **state,
+            "answer": (
+                "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요."
+            ),
+            "source_docs": [],
+        }
+    return state
+
+
+def _build_entry_runnable():
+    """원시 입력 → question, history_pairs, chat_history."""
+    return RunnableLambda(_entry_normalize_dict, name="entry_normalize").with_config(run_name="entry_normalize")
+
+
+def _entry_normalize_dict(x: dict) -> dict:
+    q = (x.get("question") or "").strip()
+    hp = x.get("history_pairs") or []
+    return {"question": q, "history_pairs": hp, "chat_history": _pairs_to_messages(hp)}
+
+
+def _router_assign_from_state(state: dict) -> dict:
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        return {**state, "route": "RAG"}
+    try:
+        out = _build_router_chain().invoke({
+            "question": state["question"][:500],
+            "history_text": _format_history_for_router(state["history_pairs"])[:2000],
+        })
+        route = out if out in ("RAG", "NO_RAG", "GENERAL") else "RAG"
+        return {**state, "route": route}
+    except Exception:
+        return {**state, "route": "RAG"}
+
+
+def _build_router_assign_runnable():
+    return RunnableLambda(_router_assign_from_state, name="router_assign").with_config(run_name="router_assign")
+
+
+def _wrap_text_answer(text: str) -> dict:
+    return {"answer": text, "source_docs": []}
+
+
+def _build_no_rag_invoke_chain(system_prompt: str, run_name: str):
+    llm = ChatOpenAI(model=config.OPENAI_MODEL, temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{question}"),
+    ])
+    wrap = RunnableLambda(_wrap_text_answer, name=f"{run_name}_output")
+    return (prompt | llm | StrOutputParser() | wrap).with_config(run_name=run_name)
+
+
+def _empty_question_response(_: dict) -> dict:
+    return {"answer": "질문을 입력해 주세요.", "source_docs": []}
+
+
+def _build_empty_question_runnable():
+    return RunnableLambda(_empty_question_response, name="empty_question").with_config(run_name="empty_question")
+
+
+def _build_rag_invoke_chain():
+    """retrieve → 생성 → 품질 평가·재시도 → 인덱스 가드."""
+    return (
+        _build_rag_retrieve_pipeline()
+        | RunnablePassthrough.assign(answer=_build_rag_gen_pipe())
+        | RunnableLambda(_eval_retry_step, name="eval_retry").with_config(run_name="eval_retry")
+        | RunnableLambda(_rag_index_guard, name="rag_index_guard").with_config(run_name="rag_index_guard")
+    ).with_config(run_name="rag_answer_invoke")
+
+
+def _build_route_branch():
+    _no_rag = _build_no_rag_invoke_chain(NO_RAG_PORTFOLIO_SYSTEM, "no_rag_portfolio")
+    _gen = _build_no_rag_invoke_chain(GENERAL_SYSTEM, "general_qa")
+    _rag = _build_rag_invoke_chain()
+    routed = (
+        _build_router_assign_runnable()
+        | RunnableBranch(
+            (lambda x: x.get("route") == "NO_RAG", _no_rag),
+            (lambda x: x.get("route") == "GENERAL", _gen),
+            _rag,
+        )
+    )
+    return RunnableBranch(
+        (lambda s: not (s.get("question") or "").strip(), _build_empty_question_runnable()),
+        routed,
+    ).with_config(run_name="route_branch")
+
+
+def _build_portfolio_answer_chain():
+    """전체 포트폴리오 Q&A: entry → (빈 질문 | 라우터 → RAG/NO_RAG/GENERAL). LangSmith 루트: `portfolio_answer`."""
+    return (_build_entry_runnable() | _build_route_branch()).with_config(run_name="portfolio_answer")
+
+
+def _build_no_rag_stream_chain(system_prompt: str, run_name: str):
+    llm = ChatOpenAI(model=config.OPENAI_MODEL, temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{question}"),
+    ])
+    return (prompt | llm | StrOutputParser()).with_config(run_name=run_name)
+
+
+def _build_rag_stream_chain():
+    """retrieve_pipeline 출력 dict → 토큰 스트림. LangSmith: `rag_stream_chain`."""
+    prep = RunnableLambda(_prepare_rag_generate_input, name="prepare_rag_generate").with_config(
+        run_name="prepare_rag_generate"
+    )
+    return (prep | _build_rag_generate_chain()).with_config(run_name="rag_stream_chain")
+
+
 def _generate_with_context(question: str, context: str, chat_history: list, sub_queries: list | None = None):
     """지정한 context로 RAG 스타일 답변 생성 (평가 후 재시도용). 원문 question과 검색에 쓴 sub_queries를 시스템 프롬프트에 포함."""
     llm = ChatOpenAI(
@@ -1126,7 +1301,7 @@ def _stream_no_rag(question: str, chat_history: list, system_prompt: str):
 
 def get_chain():
     """RAG 체인 생성 (지연 로딩). 대화 히스토리 포함.
-    참고: get_answer/get_answer_stream은 이 체인을 쓰지 않고 Query Expansion + Hybrid Search 경로를 사용함. 노트북·외부 호출용."""
+    참고: 앱의 `get_answer` / `get_answer_stream` 은 `_build_portfolio_answer_chain` 등 전체 LCEL을 사용함. 노트북·단순 검색용."""
     retriever = _load_retriever()
     llm = ChatOpenAI(
         model=config.OPENAI_MODEL,
@@ -1150,143 +1325,221 @@ def get_chain():
     return chain, retriever
 
 
-def _build_full_rag_chain():
-    """LCEL: query_expansion | rag_scope | retrieve | generate. LangSmith에 각 단계·검색된 문서(retrieved_preview) 노출."""
-    return (
-        _build_query_expansion_chain()
-        | RunnableLambda(_rag_scope_step, name="rag_scope")
-        | _build_retrieve_chain()
-        | RunnablePassthrough.assign(
-            answer=lambda s: _build_rag_generate_chain().invoke({
-                "question": s["question"],
-                "chat_history": s["chat_history"],
-                "context": s["context"],
-                "sub_queries": _format_sub_queries(s.get("queries")),
-            }),
-        )
-    ).with_config(run_name="rag")
-
-
-@traceable(name="rag")
 def get_answer(question: str, history_pairs: list | None = None):
     """
-    질문에 대해 RAG 또는 LLM만 사용. 대화 히스토리 반영.
-    LCEL 구조(router | query_expansion | rag_scope | retrieve | generate)로 LangSmith에 단계·검색 문서 노출.
+    질문에 대해 RAG 또는 LLM만 사용. 전체 경로가 LCEL(`portfolio_answer`)로 묶여 LangSmith에서 단계별 디버깅 가능.
     Returns:
         tuple: (answer: str, source_docs: list) — 포폴 무관이면 source_docs는 []
     """
-    if not (question or "").strip():
-        return "질문을 입력해 주세요.", []
-    question = (question or "").strip()
-    history_pairs = history_pairs or []
-    chat_history = _pairs_to_messages(history_pairs)
-
-    route = _route_question(question, history_pairs)
-    if route == "NO_RAG":
-        answer = _invoke_no_rag(question, chat_history, NO_RAG_PORTFOLIO_SYSTEM)
-        return answer, []
-    if route == "GENERAL":
-        answer = _invoke_no_rag(question, chat_history, GENERAL_SYSTEM)
-        return answer, []
-
-    # RAG: LCEL query_expansion | retrieve | generate (LangSmith에 검색 내용·단계 노출)
     try:
-        full_rag = _build_full_rag_chain()
-        state0 = {
-            "question": question,
-            "chat_history": chat_history,
-            "history_pairs": history_pairs,
-        }
-        result = full_rag.invoke(state0)
+        result = _build_portfolio_answer_chain().invoke(
+            {"question": question or "", "history_pairs": history_pairs or []}
+        )
+    except FileNotFoundError as e:
+        print(f"[RAG] 인덱스 없음: {e}", flush=True)
+        return (
+            "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.",
+            [],
+        )
     except Exception as e:
         print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
-        return "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
-
-    source_docs = result.get("source_docs") or []
-    answer = result.get("answer") or ""
-    if not source_docs and not (result.get("context") or "").strip():
-        return "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
-
-    # 평가 후 재시도: Faithfulness/Relevance 낮으면 k 늘려 1회만 재검색·재생성
-    if getattr(config, "EVAL_RETRY_ENABLED", False) and source_docs:
-        eval_result = evaluate_response_from_docs(question, source_docs, answer)
-        f = eval_result.get("faithfulness_score")
-        r = eval_result.get("relevance_score")
-        min_f = getattr(config, "EVAL_MIN_FAITHFULNESS", 3)
-        min_r = getattr(config, "EVAL_MIN_RELEVANCE", 3)
-        if (f is not None and f < min_f) or (r is not None and r < min_r):
-            try:
-                queries = result.get("queries") or [question]
-                dk = getattr(config, "HYBRID_DENSE_K", 10) + config.RETRY_K_INCREMENT
-                sk = getattr(config, "HYBRID_SPARSE_K", 10) + config.RETRY_K_INCREMENT
-                mn = getattr(config, "HYBRID_MERGE_TOP_N", 15)
-                rag_scope = result.get("rag_scope") or "SINGLE"
-                source_docs, context, _ = _run_retrieval_core(
-                    question, queries, rag_scope, dense_k=dk, sparse_k=sk, merge_top_n=mn
-                )
-                answer = _generate_with_context(question, context, chat_history, sub_queries=queries)
-            except Exception:
-                pass
-
-    return answer, source_docs
+        return (
+            "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.",
+            [],
+        )
+    return result.get("answer") or "", result.get("source_docs") or []
 
 
-@traceable(name="rag_stream")
 def get_answer_stream(question: str, history_pairs: list | None = None):
     """
-    질문에 대해 RAG 또는 LLM만 스트리밍. (full_answer_so_far, source_docs) 를 yield.
-    LCEL query_expansion | retrieve 사용 후 generate만 스트리밍 (LangSmith 트레이스).
+    (full_answer_so_far, source_docs) 스트리밍. NO_RAG/GENERAL은 LCEL 스트림, RAG는 `rag_stream_pipeline` 으로 중첩 트레이스.
     """
-    if not (question or "").strip():
+    entry = _entry_normalize_dict({"question": question or "", "history_pairs": history_pairs or []})
+    if not entry.get("question"):
         yield "질문을 입력해 주세요.", []
         return
-    question = (question or "").strip()
-    history_pairs = history_pairs or []
-    chat_history = _pairs_to_messages(history_pairs)
-
-    _debug("라우터 분류 중...")
-    route = _route_question(question, history_pairs)
+    routed = _router_assign_from_state(entry)
+    route = routed.get("route")
     _debug(f"라우터 결과: {route}")
+
     if route == "NO_RAG":
-        for full in _stream_no_rag(question, chat_history, NO_RAG_PORTFOLIO_SYSTEM):
+        chain = _build_no_rag_stream_chain(NO_RAG_PORTFOLIO_SYSTEM, "no_rag_portfolio_stream")
+        full = ""
+        for chunk in chain.stream({"question": routed["question"], "chat_history": routed["chat_history"]}):
+            full += chunk
             yield full, []
         return
     if route == "GENERAL":
-        for full in _stream_no_rag(question, chat_history, GENERAL_SYSTEM):
+        chain = _build_no_rag_stream_chain(GENERAL_SYSTEM, "general_qa_stream")
+        full = ""
+        for chunk in chain.stream({"question": routed["question"], "chat_history": routed["chat_history"]}):
+            full += chunk
             yield full, []
         return
 
-    # RAG: LCEL query_expansion | retrieve (트레이스) → generate 스트리밍
     try:
-        _debug("Query Expansion·검색 체인 실행...")
-        expansion_chain = _build_query_expansion_chain()
-        retrieve_chain = _build_retrieve_chain()
-        state0 = {
-            "question": question,
-            "chat_history": chat_history,
-            "history_pairs": history_pairs,
-        }
-        state1 = expansion_chain.invoke(state0)
-        state1 = _rag_scope_step(state1)
-        state2 = retrieve_chain.invoke(state1)
-        source_docs = state2.get("source_docs") or []
-        context = state2.get("context") or ""
-        queries = state2.get("queries") or [question]
-        if not source_docs and not context.strip():
-            yield "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
+        _debug("RAG 스트림: retrieve → generate")
+        st = _build_rag_retrieve_pipeline().invoke(routed)
+        source_docs = st.get("source_docs") or []
+        ctx = (st.get("context") or "").strip()
+        if not source_docs and not ctx:
+            yield (
+                "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.",
+                [],
+            )
             return
-        _debug("LLM 스트리밍 시작...")
-        stream_chain = _build_rag_generate_chain()
         full = ""
-        for chunk in stream_chain.stream({
-            "question": question,
-            "chat_history": chat_history,
-            "context": context,
-            "sub_queries": _format_sub_queries(queries),
-        }):
+        for chunk in _build_rag_stream_chain().stream(st):
             full += chunk
             yield full, source_docs
     except Exception as e:
         print(f"[RAG] 인덱스 로드 실패: {e}", flush=True)
-        yield "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.", []
-        return
+        yield (
+            "포트폴리오 인덱스가 없습니다. 터미널에서 `uv run python scripts/build_index.py` 를 먼저 실행해 주세요.",
+            [],
+        )
+
+
+# ── Gradio: 전체 프로젝트 요약 기반 소개글·직무 적합성 (인덱스의 summary 청크 전체) ─────────
+
+_PORTFOLIO_INTRO_SYSTEM = """<role>채용·인사 담당자를 위한 지원자 **소개글**을 작성하는 카피라이터입니다.</role>
+
+<inputs>
+<basic_profile> 후보 기본 프로필(보조 정보) </basic_profile>
+<portfolio_summaries> 포트폴리오에서 **파일(프로젝트) 단위 요약 청크만** 모은 본문 </portfolio_summaries>
+</inputs>
+
+<rules>
+- 요약·프로필에 **근거가 있는 사실만** 사용합니다. 없으면 추측하지 말고 「포트폴리오에 명시되지 않음」으로 짧게 표기합니다.
+- 한국어 마크다운: ### 소제목, **강조**, 불릿.
+- 톤: 격식 있고 따뜻하게, 과장 없이.
+- 반드시 포함: 1) 한 줄 요약 2) 핵심 경력·학력 3) 대표 프로젝트(요약에 나온 것만) 4) 기술·역량 5) 인사 담당자에게 전하는 한마디
+</rules>
+
+<basic_profile>
+{basic_profile}
+</basic_profile>
+
+<portfolio_summaries>
+{summaries}
+</portfolio_summaries>
+"""
+
+_JOB_FIT_SYSTEM = """<role>채용 담당자 관점에서 지원자와 **입력 직무**의 적합성을 평가합니다.</role>
+
+<inputs>
+<basic_profile> 기본 정보 </basic_profile>
+<target_role> 사용자가 입력한 직무명 </target_role>
+<portfolio_summaries> 프로젝트별 요약 전체 </portfolio_summaries>
+</inputs>
+
+<rules>
+- 문서에 없는 사실을 지어내지 않습니다.
+- 한국어 마크다운으로만 작성합니다.
+- 반드시 다음 소제목을 사용합니다:
+### 종합 판단
+(한 문단: 적합·조건부·정보 부족 등)
+### 직무와 잘 맞는 근거
+(불릿, 요약·프로필 근거만)
+### 부족하거나 확인이 필요한 점
+### 후속 질문 제안
+(면접용 2~4개)
+</rules>
+
+<basic_profile>
+{basic_profile}
+</basic_profile>
+
+<target_role>
+{job_title}
+</target_role>
+
+<portfolio_summaries>
+{summaries}
+</portfolio_summaries>
+"""
+
+
+def get_portfolio_summaries_context_bundle(max_chars: int | None = None) -> tuple[str, list]:
+    """인덱스 bm25_docs 기준, 소스당 요약 청크 1개씩 모아 포맷된 컨텍스트 문자열과 Document 리스트."""
+    max_chars = max_chars if max_chars is not None else getattr(config, "SOURCE_EXPANSION_MAX_CONTEXT_CHARS", 48_000)
+    try:
+        chunks = _get_corpus_chunks_list()
+        if not chunks:
+            return "", []
+        summaries = _all_summary_docs_one_per_source(chunks)
+        if not summaries:
+            return "", []
+        if max_chars and max_chars > 0:
+            docs = _apply_char_budget_docs(summaries, max_chars)
+        else:
+            docs = summaries
+        return _format_docs(docs), docs
+    except Exception as e:
+        _debug(f"get_portfolio_summaries_context_bundle: {e}")
+        return "", []
+
+
+def generate_intro_from_all_summaries() -> str:
+    """프로젝트 요약 전체를 읽고 인사 담당자용 소개글을 생성."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return "⚠️ OPENAI_API_KEY가 설정되지 않았습니다."
+    ctx, _ = get_portfolio_summaries_context_bundle()
+    if not ctx.strip():
+        return (
+            "⚠️ 인덱스에서 **프로젝트 요약 청크**를 찾을 수 없습니다. "
+            "`uv run python scripts/build_index.py`로 인덱스를 다시 빌드하고, 요약 생성(INDEX_SUMMARY_ENABLED)이 켜져 있는지 확인해 주세요."
+        )
+    try:
+        llm = ChatOpenAI(model=config.OPENAI_MODEL, temperature=0.35, api_key=api_key)
+        prompt = _safe_format(
+            _PORTFOLIO_INTRO_SYSTEM,
+            basic_profile=PROFILE_BASIC.strip()[:12_000],
+            summaries=ctx[:120_000],
+        )
+        return llm.invoke(prompt).content
+    except Exception as e:
+        return f"⚠️ 소개글 생성 중 오류: {e}"
+
+
+def evaluate_job_fit_for_role(job_title: str) -> str:
+    """전체 요약 + 프로필을 바탕으로 직무 적합성 평가 텍스트(마크다운)."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return "⚠️ OPENAI_API_KEY가 설정되지 않았습니다."
+    title = (job_title or "").strip()
+    if not title:
+        return "평가할 **직무명**을 입력해 주세요."
+    ctx, _ = get_portfolio_summaries_context_bundle()
+    if not ctx.strip():
+        return (
+            "⚠️ 인덱스에서 프로젝트 요약을 불러올 수 없습니다. `uv run python scripts/build_index.py`를 실행해 주세요."
+        )
+    try:
+        llm = ChatOpenAI(model=config.OPENAI_MODEL, temperature=0.2, api_key=api_key)
+        prompt = _safe_format(
+            _JOB_FIT_SYSTEM,
+            basic_profile=PROFILE_BASIC.strip()[:12_000],
+            job_title=title[:500],
+            summaries=ctx[:120_000],
+        )
+        return llm.invoke(prompt).content
+    except Exception as e:
+        return f"⚠️ 평가 중 오류: {e}"
+
+
+def get_intro_prompt_placeholder_display() -> str:
+    """UI에 노출할 소개글용 시스템 프롬프트(본문 자리 표시자)."""
+    return _PORTFOLIO_INTRO_SYSTEM.replace("{basic_profile}", "〈candidate_profile.py 기반 프로필〉").replace(
+        "{summaries}", "〈인덱스 내 프로젝트별 요약 청크 전체·문자 상한 적용〉"
+    )
+
+
+def get_job_fit_prompt_placeholder_display() -> str:
+    """UI에 노출할 직무 평가용 시스템 프롬프트(본문 자리 표시자)."""
+    return (
+        _JOB_FIT_SYSTEM.replace("{basic_profile}", "〈candidate_profile.py 기반 프로필〉")
+        .replace("{job_title}", "〈사용자 입력 직무명〉")
+        .replace("{summaries}", "〈인덱스 내 프로젝트별 요약 청크 전체·문자 상한 적용〉")
+    )

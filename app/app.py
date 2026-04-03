@@ -22,7 +22,14 @@ from langchain_openai import ChatOpenAI
 
 import config
 
-from app.rag import get_answer, get_answer_stream
+from app.rag import (
+    evaluate_job_fit_for_role,
+    generate_intro_from_all_summaries,
+    get_answer,
+    get_answer_stream,
+    get_intro_prompt_placeholder_display,
+    get_job_fit_prompt_placeholder_display,
+)
 
 APP_VERSION = config.APP_VERSION
 
@@ -359,99 +366,178 @@ def build_ui():
             pwd_error = gr.Markdown("", visible=False)
 
         with gr.Column(visible=False) as chat_section:
-            gr.Markdown(f"""
-        ## 📄 포트폴리오 Q&A
-        지원자 포트폴리오에 대해 궁금한 점을 물어보세요. 답변은 포트폴리오 내용을 바탕으로 합니다.
+            gr.Markdown(
+                f"""
+<div class="app-hero">
+  <div class="app-hero-title">포트폴리오 에이전트</div>
+  <div class="app-hero-sub">RAG 검색 · 프로젝트 요약 기반 소개글 · 직무 적합성 평가</div>
+  {_version_footer_md()}
+</div>
+"""
+            )
+            with gr.Tabs(elem_classes=["main-tabs"]) as _main_tabs:
+                with gr.Tab("💬 포트폴리오 Q&A"):
+                    stats_md = gr.Markdown(_format_stats(0, 0), elem_classes=["stats-bar"])
+                    chatbot = gr.Chatbot(
+                        value=_to_messages([[None, FIRST_MESSAGE]]),
+                        height=420,
+                        elem_classes=["chat-container"],
+                        render_markdown=True,
+                    )
+                    with gr.Accordion("✨ 추천 질문", open=False):
+                        with gr.Row():
+                            preset_btns = [gr.Button(q, size="sm", variant="secondary") for q in PRESET_QUESTIONS]
+                    txt = gr.Textbox(
+                        placeholder="질문을 입력하세요... (Enter로 전송)",
+                        label="",
+                        scale=7,
+                        container=False,
+                        max_lines=2,
+                    )
+                    with gr.Row():
+                        submit_btn = gr.Button("전송", variant="primary", size="lg")
+                        summary_btn = gr.Button("📥 요약 다운로드 (MD)", variant="secondary", size="lg")
+                        summary_pdf_btn = gr.Button("📥 요약 다운로드 (PDF)", variant="secondary", size="lg")
+                        clear_btn = gr.Button("🗑️ 대화 초기화", variant="stop", size="lg")
+                    summary_file = gr.File(label="대화 요약 파일", visible=True, interactive=False)
+                    keyword_md = gr.Markdown(_keyword_stats([]), elem_classes=["stats-bar"])
+                    for btn, q in zip(preset_btns, PRESET_QUESTIONS):
+                        btn.click(fn=lambda q=q: q, outputs=[txt])
+                    LOADING_PLACEHOLDER = "⏳ 검색·답변 생성 중..."
 
-        {_version_footer_md()}
-        """)
-            stats_md = gr.Markdown(_format_stats(0, 0), elem_classes=["stats-bar"])
-            chatbot = gr.Chatbot(
-                value=_to_messages([[None, FIRST_MESSAGE]]),
-                height=420,
-                elem_classes=["chat-container"],
-                render_markdown=True,
-            )
-            with gr.Accordion("✨ 추천 질문", open=False):
-                with gr.Row():
-                    preset_btns = [gr.Button(q, size="sm", variant="secondary") for q in PRESET_QUESTIONS]
-            txt = gr.Textbox(
-                placeholder="질문을 입력하세요... (Enter로 전송)",
-                label="",
-                scale=7,
-                container=False,
-                max_lines=2,
-            )
-            with gr.Row():
-                submit_btn = gr.Button("전송", variant="primary", size="lg")
-                summary_btn = gr.Button("📥 요약 다운로드 (MD)", variant="secondary", size="lg")
-                summary_pdf_btn = gr.Button("📥 요약 다운로드 (PDF)", variant="secondary", size="lg")
-                clear_btn = gr.Button("🗑️ 대화 초기화", variant="stop", size="lg")
-            summary_file = gr.File(label="대화 요약 파일", visible=True, interactive=False)
-            keyword_md = gr.Markdown(_keyword_stats([]), elem_classes=["stats-bar"])
-            # 프리셋: 클릭 시 입력창에 질문 넣기
-            for btn, q in zip(preset_btns, PRESET_QUESTIONS):
-                btn.click(fn=lambda q=q: q, outputs=[txt])
-            LOADING_PLACEHOLDER = "⏳ 검색·답변 생성 중..."
-            def _submit_stream_ui(message, chat_value):
-                pairs = _from_messages(chat_value or [])
-                msg = (message or "").strip()
-                if not msg:
-                    yield _to_messages(pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
-                    return
-                initial_pairs = pairs + [[msg, LOADING_PLACEHOLDER]]
-                yield _to_messages(initial_pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
-                for new_pairs, clear_txt, stats, keywords in _submit_stream(msg, pairs):
-                    yield _to_messages(new_pairs), clear_txt, stats, keywords
-            submit_btn.click(
-                fn=_submit_stream_ui,
-                inputs=[txt, chatbot],
-                outputs=[chatbot, txt, stats_md, keyword_md],
-                show_progress=False,
-            ).then(fn=lambda: "", outputs=[txt])
-            txt.submit(
-                fn=_submit_stream_ui,
-                inputs=[txt, chatbot],
-                outputs=[chatbot, txt, stats_md, keyword_md],
-                show_progress=False,
-            ).then(fn=lambda: "", outputs=[txt])
-            def on_clear():
-                gr.Info("대화가 초기화되었습니다.")
-                return _to_messages([[None, FIRST_MESSAGE]]), _format_stats(0, 0), _keyword_stats([])
-            clear_btn.click(
-                fn=on_clear,
-                inputs=[],
-                outputs=[chatbot, stats_md, keyword_md],
-            )
-            def on_summary_md(chat_value):
-                pairs = _from_messages(chat_value or [])
-                path = _generate_summary_file(pairs)
-                if path:
-                    gr.Info("요약 파일이 준비되었습니다. 아래에서 다운로드하세요.")
-                    return path
-                gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
-                return None
-            summary_btn.click(
-                fn=on_summary_md,
-                inputs=[chatbot],
-                outputs=[summary_file],
-            )
-            def on_summary_pdf(chat_value):
-                pairs = _from_messages(chat_value or [])
-                path, fmt = _generate_summary_pdf_or_txt(pairs)
-                if not path:
-                    gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
-                    return None
-                if fmt == "pdf":
-                    gr.Info("PDF 파일이 준비되었습니다. 아래에서 다운로드하세요.")
-                else:
-                    gr.Warning("한글 PDF 생성에 실패해 텍스트(.txt) 파일로 저장했습니다. 아래에서 다운로드하세요.")
-                return path
-            summary_pdf_btn.click(
-                fn=on_summary_pdf,
-                inputs=[chatbot],
-                outputs=[summary_file],
-            )
+                    def _submit_stream_ui(message, chat_value):
+                        pairs = _from_messages(chat_value or [])
+                        msg = (message or "").strip()
+                        if not msg:
+                            yield _to_messages(pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
+                            return
+                        initial_pairs = pairs + [[msg, LOADING_PLACEHOLDER]]
+                        yield _to_messages(initial_pairs), "", _format_stats(*_stats_from_history(pairs)), _keyword_stats(pairs)
+                        for new_pairs, clear_txt, stats, keywords in _submit_stream(msg, pairs):
+                            yield _to_messages(new_pairs), clear_txt, stats, keywords
+
+                    submit_btn.click(
+                        fn=_submit_stream_ui,
+                        inputs=[txt, chatbot],
+                        outputs=[chatbot, txt, stats_md, keyword_md],
+                        show_progress=False,
+                    ).then(fn=lambda: "", outputs=[txt])
+                    txt.submit(
+                        fn=_submit_stream_ui,
+                        inputs=[txt, chatbot],
+                        outputs=[chatbot, txt, stats_md, keyword_md],
+                        show_progress=False,
+                    ).then(fn=lambda: "", outputs=[txt])
+
+                    def on_clear():
+                        gr.Info("대화가 초기화되었습니다.")
+                        return _to_messages([[None, FIRST_MESSAGE]]), _format_stats(0, 0), _keyword_stats([])
+
+                    clear_btn.click(
+                        fn=on_clear,
+                        inputs=[],
+                        outputs=[chatbot, stats_md, keyword_md],
+                    )
+
+                    def on_summary_md(chat_value):
+                        pairs = _from_messages(chat_value or [])
+                        path = _generate_summary_file(pairs)
+                        if path:
+                            gr.Info("요약 파일이 준비되었습니다. 아래에서 다운로드하세요.")
+                            return path
+                        gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
+                        return None
+
+                    summary_btn.click(
+                        fn=on_summary_md,
+                        inputs=[chatbot],
+                        outputs=[summary_file],
+                    )
+
+                    def on_summary_pdf(chat_value):
+                        pairs = _from_messages(chat_value or [])
+                        path, fmt = _generate_summary_pdf_or_txt(pairs)
+                        if not path:
+                            gr.Warning("대화 내용이 없습니다. 먼저 질문을 나눈 뒤 다시 시도해 주세요.")
+                            return None
+                        if fmt == "pdf":
+                            gr.Info("PDF 파일이 준비되었습니다. 아래에서 다운로드하세요.")
+                        else:
+                            gr.Warning("한글 PDF 생성에 실패해 텍스트(.txt) 파일로 저장했습니다. 아래에서 다운로드하세요.")
+                        return path
+
+                    summary_pdf_btn.click(
+                        fn=on_summary_pdf,
+                        inputs=[chatbot],
+                        outputs=[summary_file],
+                    )
+
+                with gr.Tab("✍️ 소개글 작성"):
+                    gr.Markdown(
+                        """
+<div class="panel-card panel-card-accent">
+<h3 class="panel-heading">인사 담당자용 소개글</h3>
+<p class="panel-desc">인덱스에 빌드된 <strong>전체 프로젝트 요약</strong>(파일당 1개 요약 청크)과 기본 프로필을 읽고, 한 편의 소개글을 작성합니다. 채팅 히스토리와는 별도로 동작합니다.</p>
+</div>
+"""
+                    )
+                    intro_generate_btn = gr.Button(
+                        "전체 프로젝트 요약 기반으로 소개글 작성",
+                        variant="primary",
+                        size="lg",
+                        elem_classes=["cta-button"],
+                    )
+                    intro_output = gr.Markdown(elem_classes=["insight-output"])
+
+                    def _run_intro():
+                        if not os.getenv("OPENAI_API_KEY", "").strip():
+                            return "⚠️ OPENAI_API_KEY가 필요합니다."
+                        return generate_intro_from_all_summaries()
+
+                    intro_generate_btn.click(
+                        fn=_run_intro,
+                        inputs=[],
+                        outputs=[intro_output],
+                    )
+                    with gr.Accordion("🔍 LLM 시스템 지시문 (실제 호출 시 요약·프로필이 채워집니다)", open=False):
+                        gr.Markdown(
+                            f"```text\n{get_intro_prompt_placeholder_display()}\n```",
+                            elem_classes=["prompt-preview"],
+                        )
+
+                with gr.Tab("🎯 직무 적합성"):
+                    gr.Markdown(
+                        """
+<div class="panel-card">
+<h3 class="panel-heading">직무 적합성 평가</h3>
+<p class="panel-desc">같은 <strong>전체 프로젝트 요약 + 기본 프로필</strong>을 바탕으로, 입력하신 직무에 대한 적합성을 정리해 드립니다. 참고용이며 최종 판단은 채용 절차에서 이루어져야 합니다.</p>
+</div>
+"""
+                    )
+                    job_title_in = gr.Textbox(
+                        label="평가할 직무",
+                        placeholder="예: 데이터 분석가 (광고·마케팅 도메인), LLM 에이전트 엔지니어",
+                        lines=2,
+                        elem_classes=["job-input"],
+                    )
+                    job_eval_btn = gr.Button("적합성 평가 실행", variant="primary", size="lg", elem_classes=["cta-button"])
+                    with gr.Accordion("🔍 사용 중인 평가 프롬프트 (시스템 지시문)", open=False):
+                        gr.Markdown(
+                            f"```text\n{get_job_fit_prompt_placeholder_display()}\n```",
+                            elem_classes=["prompt-preview"],
+                        )
+                    job_eval_out = gr.Markdown(elem_classes=["insight-output"])
+
+                    def _run_job_eval(title: str):
+                        if not os.getenv("OPENAI_API_KEY", "").strip():
+                            return "⚠️ OPENAI_API_KEY가 필요합니다."
+                        return evaluate_job_fit_for_role(title or "")
+
+                    job_eval_btn.click(
+                        fn=_run_job_eval,
+                        inputs=[job_title_in],
+                        outputs=[job_eval_out],
+                    )
 
         def _check_pwd(pwd):
             expect = _app_password if _app_password else "dev"
@@ -480,9 +566,44 @@ def build_ui():
 
 if __name__ == "__main__":
     custom_css = """
-    .stats-bar { padding: 0.6rem 1rem; border-radius: 8px; background: var(--block-background-fill); border: 1px solid var(--block-border-color); }
-    .chat-container { min-height: 420px; }
-    /* 예시 질문 블록 숨김 (추천 질문만 사용) */
+    .stats-bar { padding: 0.6rem 1rem; border-radius: 10px; background: var(--block-background-fill); border: 1px solid var(--block-border-color); }
+    .chat-container { min-height: 420px; border-radius: 12px !important; }
+    .app-hero {
+      padding: 1.1rem 1.35rem;
+      border-radius: 16px;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), rgba(14, 165, 233, 0.08));
+      border: 1px solid rgba(99, 102, 241, 0.28);
+      box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    }
+    .app-hero-title { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; color: var(--body-text-color); margin-bottom: 0.25rem; }
+    .app-hero-sub { font-size: 0.92rem; opacity: 0.88; line-height: 1.45; }
+    .main-tabs { margin-top: 0.25rem; }
+    .main-tabs .tab-nav button { font-weight: 600 !important; border-radius: 10px 10px 0 0 !important; }
+    .panel-card {
+      padding: 1rem 1.15rem;
+      border-radius: 14px;
+      border: 1px solid var(--block-border-color);
+      background: var(--block-background-fill);
+      margin-bottom: 1rem;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+    }
+    .panel-card-accent {
+      border-color: rgba(99, 102, 241, 0.35);
+      background: linear-gradient(180deg, rgba(99, 102, 241, 0.06), var(--block-background-fill));
+    }
+    .panel-heading { margin: 0 0 0.5rem 0; font-size: 1.08rem; font-weight: 650; }
+    .panel-desc { margin: 0; font-size: 0.9rem; line-height: 1.55; opacity: 0.92; }
+    .cta-button { min-height: 2.75rem !important; font-weight: 600 !important; border-radius: 10px !important; }
+    .job-input textarea, .job-input input { border-radius: 10px !important; }
+    .insight-output {
+      padding: 1rem 1.15rem;
+      border-radius: 12px;
+      border: 1px solid var(--block-border-color);
+      background: var(--block-background-fill);
+      min-height: 120px;
+    }
+    .prompt-preview { font-size: 0.82rem !important; max-height: 320px; overflow: auto; }
     .gradio-container .block.examples, .gradio-container [class*="examples"] { display: none !important; }
     """
     theme = gr.themes.Glass(primary_hue="indigo", secondary_hue="slate")
