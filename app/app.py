@@ -487,7 +487,8 @@ def build_ui():
                         size="lg",
                         elem_classes=["cta-button"],
                     )
-                    with gr.Accordion("🔍 시스템 지시문 (편집 가능 — 내용을 고친 뒤 위 '소개글 작성' 버튼을 누르면 반영)", open=False):
+                    intro_saved_prompt = gr.State(value=get_intro_prompt_placeholder_display())
+                    with gr.Accordion("🔍 시스템 지시문 (편집 후 저장 버튼 클릭)", open=False):
                         intro_prompt_edit = gr.Textbox(
                             value=get_intro_prompt_placeholder_display(),
                             lines=18,
@@ -495,20 +496,31 @@ def build_ui():
                             label="소개글 시스템 프롬프트",
                             elem_classes=["prompt-preview"],
                         )
+                        intro_save_btn = gr.Button("💾 프롬프트 저장", variant="secondary", size="sm")
+                        intro_save_msg = gr.Markdown(value="", visible=False)
+
+                        def _save_intro_prompt(text: str):
+                            return text, gr.update(value="✅ 저장되었습니다.", visible=True)
+
+                        intro_save_btn.click(
+                            fn=_save_intro_prompt,
+                            inputs=[intro_prompt_edit],
+                            outputs=[intro_saved_prompt, intro_save_msg],
+                        )
                     intro_output = gr.Markdown(value="", elem_classes=["insight-output"])
 
-                    def _run_intro(user_prompt: str):
+                    def _run_intro(saved_prompt: str):
                         try:
                             if not os.getenv("OPENAI_API_KEY", "").strip():
                                 return "⚠️ OPENAI_API_KEY가 필요합니다."
-                            custom = (user_prompt or "").strip() or None
+                            custom = (saved_prompt or "").strip() or None
                             return generate_intro_from_all_summaries(custom_system_prompt=custom)
                         except Exception as exc:
                             return f"⚠️ 소개글 생성 중 오류: {exc}"
 
                     intro_generate_btn.click(
                         fn=_run_intro,
-                        inputs=[intro_prompt_edit],
+                        inputs=[intro_saved_prompt],
                         outputs=[intro_output],
                         show_progress="full",
                     )
@@ -529,7 +541,8 @@ def build_ui():
                         elem_classes=["job-input"],
                     )
                     job_eval_btn = gr.Button("적합성 평가 실행", variant="primary", size="lg", elem_classes=["cta-button"])
-                    with gr.Accordion("🔍 시스템 지시문 (편집 가능 — 내용을 고친 뒤 위 '적합성 평가 실행' 버튼을 누르면 반영)", open=False):
+                    job_saved_prompt = gr.State(value=get_job_fit_prompt_placeholder_display())
+                    with gr.Accordion("🔍 시스템 지시문 (편집 후 저장 버튼 클릭)", open=False):
                         job_prompt_edit = gr.Textbox(
                             value=get_job_fit_prompt_placeholder_display(),
                             lines=18,
@@ -537,20 +550,31 @@ def build_ui():
                             label="직무 적합성 시스템 프롬프트",
                             elem_classes=["prompt-preview"],
                         )
+                        job_save_btn = gr.Button("💾 프롬프트 저장", variant="secondary", size="sm")
+                        job_save_msg = gr.Markdown(value="", visible=False)
+
+                        def _save_job_prompt(text: str):
+                            return text, gr.update(value="✅ 저장되었습니다.", visible=True)
+
+                        job_save_btn.click(
+                            fn=_save_job_prompt,
+                            inputs=[job_prompt_edit],
+                            outputs=[job_saved_prompt, job_save_msg],
+                        )
                     job_eval_out = gr.Markdown(value="", elem_classes=["insight-output"])
 
-                    def _run_job_eval(title: str, user_prompt: str):
+                    def _run_job_eval(title: str, saved_prompt: str):
                         try:
                             if not os.getenv("OPENAI_API_KEY", "").strip():
                                 return "⚠️ OPENAI_API_KEY가 필요합니다."
-                            custom = (user_prompt or "").strip() or None
+                            custom = (saved_prompt or "").strip() or None
                             return evaluate_job_fit_for_role(title or "", custom_system_prompt=custom)
                         except Exception as exc:
                             return f"⚠️ 평가 중 오류: {exc}"
 
                     job_eval_btn.click(
                         fn=_run_job_eval,
-                        inputs=[job_title_in, job_prompt_edit],
+                        inputs=[job_title_in, job_saved_prompt],
                         outputs=[job_eval_out],
                         show_progress="full",
                     )
