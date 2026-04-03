@@ -45,6 +45,9 @@ credentials.json
 index/*.faiss
 index/*.pkl
 
+# Word 원본은 HF Space/Git 푸시 시 바이너리 정책으로 거절될 수 있음 → 로컬·인덱스 빌드용만
+data/portfolio/**/*.docx
+
 # ──────────────────────────────────────────────
 # Claude / AI assistant
 # ──────────────────────────────────────────────
