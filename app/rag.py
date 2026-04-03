@@ -1505,8 +1505,8 @@ def get_portfolio_summaries_context_bundle(max_chars: int | None = None) -> tupl
         return "", []
 
 
-def generate_intro_from_all_summaries() -> str:
-    """프로젝트 요약 전체를 읽고 인사 담당자용 소개글을 생성."""
+def generate_intro_from_all_summaries(custom_system_prompt: str | None = None) -> str:
+    """프로젝트 요약 전체를 읽고 인사 담당자용 소개글을 생성. custom_system_prompt가 있으면 기본 프롬프트 대신 사용."""
     import traceback as _tb
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -1519,9 +1519,10 @@ def generate_intro_from_all_summaries() -> str:
             "`uv run python scripts/build_index.py`로 인덱스를 다시 빌드하고, 요약 생성(INDEX_SUMMARY_ENABLED)이 켜져 있는지 확인해 주세요."
         )
     try:
+        template = (custom_system_prompt or "").strip() or _PORTFOLIO_INTRO_SYSTEM
         llm = ChatOpenAI(model=config.OPENAI_MODEL, temperature=0.35, api_key=api_key)
         prompt = _safe_format(
-            _PORTFOLIO_INTRO_SYSTEM,
+            template,
             basic_profile=PROFILE_BASIC.strip()[:12_000],
             summaries=ctx[:120_000],
         )
@@ -1532,8 +1533,8 @@ def generate_intro_from_all_summaries() -> str:
         return f"⚠️ 소개글 생성 중 오류: {e}"
 
 
-def evaluate_job_fit_for_role(job_title: str) -> str:
-    """전체 요약 + 프로필을 바탕으로 직무 적합성 평가 텍스트(마크다운)."""
+def evaluate_job_fit_for_role(job_title: str, custom_system_prompt: str | None = None) -> str:
+    """전체 요약 + 프로필을 바탕으로 직무 적합성 평가 텍스트(마크다운). custom_system_prompt가 있으면 기본 프롬프트 대신 사용."""
     import traceback as _tb
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -1548,9 +1549,10 @@ def evaluate_job_fit_for_role(job_title: str) -> str:
             "⚠️ 인덱스에서 프로젝트 요약을 불러올 수 없습니다. `uv run python scripts/build_index.py`를 실행해 주세요."
         )
     try:
+        template = (custom_system_prompt or "").strip() or _JOB_FIT_SYSTEM
         llm = ChatOpenAI(model=config.OPENAI_MODEL, temperature=0.2, api_key=api_key)
         prompt = _safe_format(
-            _JOB_FIT_SYSTEM,
+            template,
             basic_profile=PROFILE_BASIC.strip()[:12_000],
             job_title=title[:500],
             summaries=ctx[:120_000],

@@ -487,27 +487,31 @@ def build_ui():
                         size="lg",
                         elem_classes=["cta-button"],
                     )
+                    with gr.Accordion("🔍 시스템 지시문 (직접 수정 가능 — 수정 후 버튼을 누르면 반영됩니다)", open=False):
+                        intro_prompt_edit = gr.Textbox(
+                            value=get_intro_prompt_placeholder_display(),
+                            lines=18,
+                            max_lines=40,
+                            label="소개글 시스템 프롬프트",
+                            elem_classes=["prompt-preview"],
+                        )
                     intro_output = gr.Markdown(value="", elem_classes=["insight-output"])
 
-                    def _run_intro():
+                    def _run_intro(user_prompt: str):
                         try:
                             if not os.getenv("OPENAI_API_KEY", "").strip():
                                 return "⚠️ OPENAI_API_KEY가 필요합니다."
-                            return generate_intro_from_all_summaries()
+                            custom = (user_prompt or "").strip() or None
+                            return generate_intro_from_all_summaries(custom_system_prompt=custom)
                         except Exception as exc:
                             return f"⚠️ 소개글 생성 중 오류: {exc}"
 
                     intro_generate_btn.click(
                         fn=_run_intro,
-                        inputs=[],
+                        inputs=[intro_prompt_edit],
                         outputs=[intro_output],
                         show_progress="full",
                     )
-                    with gr.Accordion("🔍 LLM 시스템 지시문 (실제 호출 시 요약·프로필이 채워집니다)", open=False):
-                        gr.Markdown(
-                            f"```text\n{get_intro_prompt_placeholder_display()}\n```",
-                            elem_classes=["prompt-preview"],
-                        )
 
                 with gr.Tab("🎯 직무 적합성"):
                     gr.Markdown(
@@ -525,24 +529,28 @@ def build_ui():
                         elem_classes=["job-input"],
                     )
                     job_eval_btn = gr.Button("적합성 평가 실행", variant="primary", size="lg", elem_classes=["cta-button"])
-                    with gr.Accordion("🔍 사용 중인 평가 프롬프트 (시스템 지시문)", open=False):
-                        gr.Markdown(
-                            f"```text\n{get_job_fit_prompt_placeholder_display()}\n```",
+                    with gr.Accordion("🔍 시스템 지시문 (직접 수정 가능 — 수정 후 버튼을 누르면 반영됩니다)", open=False):
+                        job_prompt_edit = gr.Textbox(
+                            value=get_job_fit_prompt_placeholder_display(),
+                            lines=18,
+                            max_lines=40,
+                            label="직무 적합성 시스템 프롬프트",
                             elem_classes=["prompt-preview"],
                         )
                     job_eval_out = gr.Markdown(value="", elem_classes=["insight-output"])
 
-                    def _run_job_eval(title: str):
+                    def _run_job_eval(title: str, user_prompt: str):
                         try:
                             if not os.getenv("OPENAI_API_KEY", "").strip():
                                 return "⚠️ OPENAI_API_KEY가 필요합니다."
-                            return evaluate_job_fit_for_role(title or "")
+                            custom = (user_prompt or "").strip() or None
+                            return evaluate_job_fit_for_role(title or "", custom_system_prompt=custom)
                         except Exception as exc:
                             return f"⚠️ 평가 중 오류: {exc}"
 
                     job_eval_btn.click(
                         fn=_run_job_eval,
-                        inputs=[job_title_in],
+                        inputs=[job_title_in, job_prompt_edit],
                         outputs=[job_eval_out],
                         show_progress="full",
                     )
