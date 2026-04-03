@@ -1482,6 +1482,8 @@ def get_portfolio_summaries_context_bundle(max_chars: int | None = None) -> tupl
 
 def generate_intro_from_all_summaries() -> str:
     """프로젝트 요약 전체를 읽고 인사 담당자용 소개글을 생성."""
+    import traceback as _tb
+
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return "⚠️ OPENAI_API_KEY가 설정되지 않았습니다."
@@ -1498,13 +1500,17 @@ def generate_intro_from_all_summaries() -> str:
             basic_profile=PROFILE_BASIC.strip()[:12_000],
             summaries=ctx[:120_000],
         )
-        return llm.invoke(prompt).content
+        result = llm.invoke(prompt)
+        return result.content
     except Exception as e:
+        _tb.print_exc()
         return f"⚠️ 소개글 생성 중 오류: {e}"
 
 
 def evaluate_job_fit_for_role(job_title: str) -> str:
     """전체 요약 + 프로필을 바탕으로 직무 적합성 평가 텍스트(마크다운)."""
+    import traceback as _tb
+
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return "⚠️ OPENAI_API_KEY가 설정되지 않았습니다."
@@ -1524,8 +1530,10 @@ def evaluate_job_fit_for_role(job_title: str) -> str:
             job_title=title[:500],
             summaries=ctx[:120_000],
         )
-        return llm.invoke(prompt).content
+        result = llm.invoke(prompt)
+        return result.content
     except Exception as e:
+        _tb.print_exc()
         return f"⚠️ 평가 중 오류: {e}"
 
 

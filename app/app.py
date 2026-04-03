@@ -487,17 +487,21 @@ def build_ui():
                         size="lg",
                         elem_classes=["cta-button"],
                     )
-                    intro_output = gr.Markdown(elem_classes=["insight-output"])
+                    intro_output = gr.Markdown(value="", elem_classes=["insight-output"])
 
                     def _run_intro():
-                        if not os.getenv("OPENAI_API_KEY", "").strip():
-                            return "⚠️ OPENAI_API_KEY가 필요합니다."
-                        return generate_intro_from_all_summaries()
+                        try:
+                            if not os.getenv("OPENAI_API_KEY", "").strip():
+                                return "⚠️ OPENAI_API_KEY가 필요합니다."
+                            return generate_intro_from_all_summaries()
+                        except Exception as exc:
+                            return f"⚠️ 소개글 생성 중 오류: {exc}"
 
                     intro_generate_btn.click(
                         fn=_run_intro,
                         inputs=[],
                         outputs=[intro_output],
+                        show_progress="full",
                     )
                     with gr.Accordion("🔍 LLM 시스템 지시문 (실제 호출 시 요약·프로필이 채워집니다)", open=False):
                         gr.Markdown(
@@ -526,17 +530,21 @@ def build_ui():
                             f"```text\n{get_job_fit_prompt_placeholder_display()}\n```",
                             elem_classes=["prompt-preview"],
                         )
-                    job_eval_out = gr.Markdown(elem_classes=["insight-output"])
+                    job_eval_out = gr.Markdown(value="", elem_classes=["insight-output"])
 
                     def _run_job_eval(title: str):
-                        if not os.getenv("OPENAI_API_KEY", "").strip():
-                            return "⚠️ OPENAI_API_KEY가 필요합니다."
-                        return evaluate_job_fit_for_role(title or "")
+                        try:
+                            if not os.getenv("OPENAI_API_KEY", "").strip():
+                                return "⚠️ OPENAI_API_KEY가 필요합니다."
+                            return evaluate_job_fit_for_role(title or "")
+                        except Exception as exc:
+                            return f"⚠️ 평가 중 오류: {exc}"
 
                     job_eval_btn.click(
                         fn=_run_job_eval,
                         inputs=[job_title_in],
                         outputs=[job_eval_out],
+                        show_progress="full",
                     )
 
         def _check_pwd(pwd):
