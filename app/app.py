@@ -487,7 +487,7 @@ def build_ui():
                         size="lg",
                         elem_classes=["cta-button"],
                     )
-                    with gr.Accordion("🔍 시스템 지시문 (직접 수정 가능 — 수정 후 버튼을 누르면 반영됩니다)", open=False):
+                    with gr.Accordion("🔍 시스템 지시문 (편집 가능 — 내용을 고친 뒤 위 '소개글 작성' 버튼을 누르면 반영)", open=False):
                         intro_prompt_edit = gr.Textbox(
                             value=get_intro_prompt_placeholder_display(),
                             lines=18,
@@ -529,7 +529,7 @@ def build_ui():
                         elem_classes=["job-input"],
                     )
                     job_eval_btn = gr.Button("적합성 평가 실행", variant="primary", size="lg", elem_classes=["cta-button"])
-                    with gr.Accordion("🔍 시스템 지시문 (직접 수정 가능 — 수정 후 버튼을 누르면 반영됩니다)", open=False):
+                    with gr.Accordion("🔍 시스템 지시문 (편집 가능 — 내용을 고친 뒤 위 '적합성 평가 실행' 버튼을 누르면 반영)", open=False):
                         job_prompt_edit = gr.Textbox(
                             value=get_job_fit_prompt_placeholder_display(),
                             lines=18,
