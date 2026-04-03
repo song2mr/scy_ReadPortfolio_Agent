@@ -533,24 +533,42 @@ K = 60 (기본값)
 
 ## 🔄 배포 (HuggingFace Spaces)
 
-### GitHub Actions 자동 배포
-`.github/workflows/hf_spaces_sync.yml` 파일을 통해 자동 배포 설정됨:
+Space는 **앱 코드**와 **검색 인덱스(FAISS·BM25)** 가 분리되어 있습니다. 문서를 바꾼 뒤에는 아래 둘 다 갱신하는 것이 안전합니다.
 
-```yaml
-# 매 푸시 또는 특정 브랜치 변경 시 자동 동기화
-on:
-  push:
-    branches:
-      - main
+| 구분 | 무엇이 바뀌는지 | 하는 일 |
+|------|----------------|--------|
+| 코드/UI | `app/`, `config.py`, `rag_scope` 등 | GitHub `main` 푸시 또는 HF Space 리모트로 푸시 |
+| 인덱스 | `data/portfolio/` 문서·요약·청크·임베딩 | 로컬에서 `build_index.py` 재실행 후 **HF Dataset**에 `index/` 업로드 |
+
+**왜 인덱스를 다시 만들까요?**  
+벡터(FAISS)와 BM25는 빌드 시점의 청크·임베딩을 저장합니다. 포트폴리오 파일을 추가·수정하면 **반드시 다시 빌드**해야 Space에서 새 내용이 검색됩니다. 앱 코드만 올리면 UI는 최신이어도 답변 근거는 예전 인덱스를 씁니다.
+
+### GitHub Actions 자동 배포 (코드 동기화)
+
+`.github/workflows/sync-to-huggingface.yml`: `main`에 푸시되면 Hugging Face Space 저장소로 미러링합니다.  
+저장소 Secrets에 **`HF_TOKEN`**(Hugging Face User Access Token, 쓰기 권한)이 있어야 합니다.
+
+### 인덱스 빌드 및 Dataset 갱신 (실제 검색 내용 업데이트)
+
+```bash
+# 1) 로컬에서 인덱스 재생성 (OPENAI_API_KEY 필요 — 파일별 요약 청크용)
+uv run python scripts/build_index.py
+
+# 2) 생성물은 프로젝트 루트의 index/ (index.faiss, index.pkl, bm25_*.pkl 등)
+
+# 3) 기존에 쓰는 HF Dataset 리포지토리에 업로드 (예: huggingface-cli)
+# pip install huggingface_hub
+# huggingface-cli login
+# huggingface-cli upload <본인아이디>/<데이터셋명> index ./index --repo-type dataset
 ```
 
-### 수동 배포
-```bash
-# 1. HuggingFace Spaces 저장소 추가
-git remote add hf-spaces https://huggingface.co/spaces/your-username/scy-rag
+Space **Variables**에 `HF_INDEX_DATASET=<아이디>/<데이터셋명>`이 맞는지 확인한 뒤 Space를 **Restart** 하면 새 인덱스를 받습니다.
 
-# 2. 푸시
-git push hf-spaces main
+### 수동 배포 (로컬에서 Space Git으로 직접)
+
+```bash
+git remote add hf https://huggingface.co/spaces/<아이디>/<스페이스이름>
+git push hf main
 ```
 
 ---

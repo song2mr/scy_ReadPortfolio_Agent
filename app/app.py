@@ -20,7 +20,11 @@ load_dotenv(ROOT / ".env")
 import gradio as gr
 from langchain_openai import ChatOpenAI
 
+import config
+
 from app.rag import get_answer, get_answer_stream
+
+APP_VERSION = config.APP_VERSION
 
 # 첫 인사 메시지 — 인사 담당자에게 송찬영을 소개하는 에이전트임을 명시
 FIRST_MESSAGE = """안녕하세요. 저는 **송찬영**을 인사·채용 담당자께 소개하는 에이전트입니다.
@@ -332,14 +336,19 @@ def _generate_summary_pdf_or_txt(history: list) -> tuple[str, str]:
         return path_txt, "txt"
 
 
+def _version_footer_md() -> str:
+    return f'<p style="margin:0;opacity:0.75;font-size:0.85rem;">앱 버전 <strong>v{APP_VERSION}</strong></p>'
+
+
 def build_ui():
-    with gr.Blocks(title="포트폴리오 Q&A") as demo:
+    with gr.Blocks(title=f"포트폴리오 Q&A v{APP_VERSION}") as demo:
         # 비밀번호 미설정 시 로컬용: "dev" 입력 시 입장. 배포 시 Space Secrets에 APP_PASSWORD 설정.
         _app_password = os.getenv("APP_PASSWORD", "").strip()
         unlocked = gr.State(False)
 
         with gr.Column(visible=True) as pwd_section:
             gr.Markdown("### 🔐 입장을 위해 비밀번호를 입력하세요")
+            gr.Markdown(_version_footer_md())
             pwd_input = gr.Textbox(
                 label="비밀번호",
                 type="password",
@@ -350,9 +359,11 @@ def build_ui():
             pwd_error = gr.Markdown("", visible=False)
 
         with gr.Column(visible=False) as chat_section:
-            gr.Markdown("""
+            gr.Markdown(f"""
         ## 📄 포트폴리오 Q&A
         지원자 포트폴리오에 대해 궁금한 점을 물어보세요. 답변은 포트폴리오 내용을 바탕으로 합니다.
+
+        {_version_footer_md()}
         """)
             stats_md = gr.Markdown(_format_stats(0, 0), elem_classes=["stats-bar"])
             chatbot = gr.Chatbot(

@@ -2,6 +2,9 @@
 import os
 from pathlib import Path
 
+# UI 표시용 앱 버전 (Gradio 제목·푸터). Space Variables에서 APP_VERSION 으로 덮어쓸 수 있음.
+APP_VERSION = (os.getenv("APP_VERSION") or "1.1").strip() or "1.1"
+
 # 경로 (프로젝트 루트 기준)
 ROOT = Path(__file__).resolve().parent
 PORTFOLIO_DIR = ROOT / "data" / "portfolio"
