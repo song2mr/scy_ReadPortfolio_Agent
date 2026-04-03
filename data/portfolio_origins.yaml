@@ -1,0 +1,57 @@
+# =============================================================================
+# 누가 무엇을 하나요?
+# -----------------------------------------------------------------------------
+# [당신만 할 수 있는 것]
+#   - 각 파일/폴더가 개인 포폴인지 회사·인턴 산출물인지 판단하고,
+#     rules 의 origin 을 personal / company 로 고치는 것.
+#
+# [스크립트가 대신 하는 것]
+#   - 미매칭 파일을 찾아 이 yaml 의 rules 끝에 자동 추가 (glob + origin: unspecified)
+#       uv run python scripts/portfolio_origins_audit.py
+#       수정 없이 보기만:  --dry-run
+#   - 인덱스 빌드 시 metadata.portfolio_origin 주입, RAG 컨텍스트에 출처 라벨 (app/rag.py)
+#   - audit 로 갱신하면 rules: 블록 안의 수동 # 주석은 지워질 수 있음. 폴더 단위 예시는 여기만 둠.
+#
+# default: rules에 안 걸릴 때
+#   unspecified - 인덱스에 넣고 "미표시"로 검색 가능
+#   excluded    - 인덱스에 넣지 않음 (rules에 명시한 파일만 화이트리스트로 넣기)
+# rules.origin 에도 excluded 가능 (해당 파일만 제외)
+# rules: data/portfolio 기준 상대 glob, 위에서 아래 순 첫 매칭만 적용.
+# source_match: 구글 드라이브 등 로컬 경로 없을 때 title/source 부분일치.
+#
+# 규칙 수정 후: uv run python scripts/build_index.py
+# 폴더 일괄 예시:  - glob: "docx/**/*.docx" / origin: company
+# =============================================================================
+default: unspecified
+rules:
+- glob: '**/README.md'
+  origin: personal
+- glob: ai-health-consultation.md
+  origin: personal
+- glob: DC_Crawling-LDA-Analysis.md
+  origin: personal
+- glob: etf_recommendation.md
+  origin: unspecified
+- glob: llm-crag.md
+  origin: unspecified
+- glob: RAG_Boardgame_Rulebook.md
+  origin: unspecified
+- glob: scy_ReadPortfolio_Agent.md
+  origin: unspecified
+- glob: text-to-sql-marketing_data-.md
+  origin: unspecified
+- glob: 광고 데드페이지 실시간 모니터링 시스템 개발.docx
+  origin: unspecified
+- glob: 광고 데이터 분석 챗봇 설계.docx
+  origin: unspecified
+- glob: 머신러닝을 활용한 낙동강 유해남조류 발생 예측.docx
+  origin: unspecified
+- glob: 사내 솔루션 Q&A 챗봇 설계.docx
+  origin: unspecified
+- glob: 애드메이커_ 광고 자동 생성 솔루션.docx
+  origin: unspecified
+- glob: 예산 소진 예측 모델 설계(SageMaker).docx
+  origin: unspecified
+- glob: 자연어를 통한 광고 소재 제작 솔루션.docx
+  origin: unspecified
+source_match: []

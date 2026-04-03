@@ -117,14 +117,38 @@ def _format_stats(turns: int, chars: int) -> str:
     return f"💬 대화 **{turns}**턴 · **{chars:,}**자"
 
 
+def _ref_heading(doc) -> str:
+    md = getattr(doc, "metadata", None) or {}
+    src = (md.get("source") or md.get("title") or "").strip()
+    origin = md.get("portfolio_origin")
+    if not origin and md.get("personal_project"):
+        origin = "personal"
+    if origin == "personal":
+        tag = " · 개인 프로젝트"
+    elif origin == "company":
+        tag = " · 회사/기관"
+    else:
+        tag = ""
+    if src:
+        try:
+            name = Path(src).name
+        except Exception:
+            name = src[-60:]
+        return f"**{name}**{tag}"
+    return f"참고{tag}" if tag else "참고"
+
+
 def _format_response(answer: str, source_docs) -> str:
     """답변 + 참고 문단(접기) 포맷."""
     if not source_docs:
         return answer
-    refs = "\n\n".join(
-        f"• {d.page_content.strip()[:400]}..." if len(d.page_content) > 400 else f"• {d.page_content.strip()}"
-        for d in source_docs
-    )
+    blocks = []
+    for d in source_docs:
+        head = _ref_heading(d)
+        body = d.page_content.strip()
+        snippet = body[:400] + "..." if len(body) > 400 else body
+        blocks.append(f"• {head}\n\n{snippet}")
+    refs = "\n\n".join(blocks)
     return answer + "\n\n<details><summary>📎 참고한 문단</summary>\n\n" + refs + "\n</details>"
 
 

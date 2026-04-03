@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>scy_Rag 체인 흐름도</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --accent-blue: #4a9eff;
+    --accent-green: #4ade80;
+    --accent-yellow: #facc15;
+    --accent-purple: #a78bfa;
+    --accent-pink: #f472b6;
+    --accent-orange: #fb923c;
+    --accent-red: #f87171;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --text-bright: #f8fafc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text-bright);
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-bottom: 48px;
+  }
+  .section-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 48px auto 24px;
+    max-width: 1100px;
+    padding-left: 12px;
+    border-left: 4px solid var(--accent-blue);
+    color: var(--text-bright);
+  }
+
+  /* ─── 파이프라인 ─── */
+  .pipeline {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    max-width: 1100px;
+    margin: 0 auto 40px;
+    overflow-x: auto;
+    padding-bottom: 12px;
+  }
+  .step {
+    flex: 0 0 auto;
+    width: 200px;
+    position: relative;
+  }
+  .step-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    position: relative;
+    transition: border-color .2s;
+  }
+  .step-box:hover { border-color: var(--accent-blue); }
+  .step-num {
+    position: absolute;
+    top: -10px;
+    left: 14px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 20px;
+    color: #fff;
+  }
+  .step-name {
+    font-weight: 700;
+    font-size: 15px;
+    margin-top: 8px;
+    margin-bottom: 6px;
+    color: var(--text-bright);
+  }
+  .step-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  /* 키 태그 */
+  .keys { display: flex; flex-wrap: wrap; gap: 4px; }
+  .key-tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .key-in  { background: #1e3a5f; color: #93c5fd; }
+  .key-out { background: #14532d; color: #86efac; }
+  .key-meta { background: #3b1764; color: #c4b5fd; }
+
+  /* 화살표 */
+  .arrow-col {
+    flex: 0 0 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 40px;
+    color: var(--text-dim);
+    font-size: 22px;
+  }
+
+  /* ─── 메타 → context 변환 ─── */
+  .transform-box {
+    max-width: 1100px;
+    margin: 0 auto 40px;
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr;
+    gap: 0;
+    align-items: center;
+  }
+  .t-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .t-card h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: var(--text-bright);
+  }
+  .t-arrow {
+    text-align: center;
+    font-size: 28px;
+    color: var(--accent-green);
+  }
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .meta-key {
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .meta-val {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .mk-source  { background: #1e3a5f; color: #93c5fd; }
+  .mk-chunk   { background: #422006; color: #fdba74; }
+  .mk-origin  { background: #3b1764; color: #c4b5fd; }
+  .mk-content { background: #14532d; color: #86efac; }
+
+  .ctx-block {
+    background: #111318;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 12px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .ctx-block .hl-origin { color: var(--accent-purple); font-weight: 700; }
+  .ctx-block .hl-file   { color: var(--accent-blue); }
+  .ctx-block .hl-body   { color: var(--text-dim); }
+  .ctx-block .hl-sep    { color: #475569; }
+
+  /* ─── 프롬프트 매핑 ─── */
+  .prompt-grid {
+    max-width: 1100px;
+    margin: 0 auto 48px;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  .vars-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .vars-card h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: var(--text-bright);
+  }
+  .var-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .var-name {
+    font-family: 'Fira Code', monospace;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .var-from {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .v-q   { background: #1e3a5f; color: #93c5fd; }
+  .v-ch  { background: #422006; color: #fdba74; }
+  .v-ctx { background: #14532d; color: #86efac; }
+  .v-sq  { background: #3b1764; color: #c4b5fd; }
+
+  .prompt-preview {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+  }
+  .prompt-preview .ph {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 4px;
+    font-family: 'Fira Code', monospace;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .prompt-preview .ph-q   { background: #1e3a5f; color: #93c5fd; }
+  .prompt-preview .ph-ch  { background: #422006; color: #fdba74; }
+  .prompt-preview .ph-ctx { background: #14532d; color: #86efac; }
+  .prompt-preview .ph-sq  { background: #3b1764; color: #c4b5fd; }
+  .prompt-preview .label  { color: #64748b; font-size: 11px; }
+
+  /* ─── 범례 ─── */
+  .legend {
+    max-width: 1100px;
+    margin: 0 auto 48px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .legend-dot {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+  }
+
+  /* ─── 단일/다중 분기 ─── */
+  .branch-box {
+    max-width: 1100px;
+    margin: 0 auto 40px;
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr;
+    gap: 0;
+    align-items: stretch;
+  }
+  .branch-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .branch-card h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .branch-card p {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .branch-mid {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    gap: 4px;
+  }
+  .branch-mid .or { font-weight: 700; color: var(--accent-yellow); font-size: 15px; }
+</style>
+</head>
+<body>
+
+<h1>scy_Rag 체인 흐름도</h1>
+<p class="subtitle">값이 어디서 만들어지고, 어떻게 넘어가서, LLM에 무엇으로 들어가는지</p>
+
+<!-- 범례 -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#1e3a5f"></div>입력으로 받는 키</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#14532d"></div>이 단계가 만드는 키</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3b1764"></div>인덱스 메타데이터</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#422006"></div>검색/내부 값</div>
+</div>
+
+<!-- ═══ SECTION 1: 메인 파이프라인 ═══ -->
+<div class="section-title">1. 메인 파이프라인 (체인 상태 딕셔너리)</div>
+
+<div class="pipeline">
+  <!-- 초기 -->
+  <div class="step">
+    <div class="step-box">
+      <div class="step-num" style="background:var(--accent-blue)">시작</div>
+      <div class="step-name">앱 입력</div>
+      <div class="step-desc">사용자가 질문 전송</div>
+      <div class="keys">
+        <span class="key-tag key-out">question</span>
+        <span class="key-tag key-out">chat_history</span>
+        <span class="key-tag key-out">history_pairs</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-col">→</div>
+
+  <!-- 라우터 -->
+  <div class="step">
+    <div class="step-box">
+      <div class="step-num" style="background:var(--accent-yellow);color:#000">①</div>
+      <div class="step-name">Router LLM</div>
+      <div class="step-desc">질문 유형 분류</div>
+      <div class="keys">
+        <span class="key-tag key-in">question</span>
+        <span class="key-tag key-in">history_pairs</span>
+      </div>
+      <div style="margin-top:8px">
+        <span class="key-tag key-out">→ RAG | NO_RAG | GENERAL</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-col">→</div>
+
+  <!-- QE -->
+  <div class="step">
+    <div class="step-box">
+      <div class="step-num" style="background:var(--accent-purple)">②</div>
+      <div class="step-name">Query Expansion</div>
+      <div class="step-desc">질문을 여러 하위 쿼리로 확장</div>
+      <div class="keys">
+        <span class="key-tag key-in">question</span>
+      </div>
+      <div style="margin-top:8px">
+        <span class="key-tag key-out">+ expansion_text</span>
+        <span class="key-tag key-out">+ queries</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-col">→</div>
+
+  <!-- rag_scope -->
+  <div class="step">
+    <div class="step-box">
+      <div class="step-num" style="background:#06b6d4;color:#000">③</div>
+      <div class="step-name">Rag Scope LLM</div>
+      <div class="step-desc">BROAD(목록·전반) vs SINGLE(한 프로젝트 깊이)</div>
+      <div class="keys">
+        <span class="key-tag key-in">question</span>
+        <span class="key-tag key-in">history_pairs</span>
+      </div>
+      <div style="margin-top:8px">
+        <span class="key-tag key-out">+ rag_scope → BROAD | SINGLE</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-col">→</div>
+
+  <!-- Retrieve -->
+  <div class="step">
+    <div class="step-box">
+      <div class="step-num" style="background:var(--accent-green);color:#000">④</div>
+      <div class="step-name">Retrieve</div>
+      <div class="step-desc">요약 검색 → rag_scope로 분기 → 청크 선택 → _format_docs</div>
+      <div class="keys">
+        <span class="key-tag key-in">question</span>
+        <span class="key-tag key-in">queries</span>
+        <span class="key-tag key-in">rag_scope</span>
+      </div>
+      <div style="margin-top:8px">
+        <span class="key-tag key-out">+ context</span>
+        <span class="key-tag key-out">+ source_docs</span>
+        <span class="key-tag key-out">+ retrieved_preview</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-col">→</div>
+
+  <!-- Generate -->
+  <div class="step">
+    <div class="step-box">
+      <div class="step-num" style="background:var(--accent-pink)">⑤</div>
+      <div class="step-name">Generate LLM</div>
+      <div class="step-desc">RAG_SYSTEM + context로 답변 생성</div>
+      <div class="keys">
+        <span class="key-tag key-in">question</span>
+        <span class="key-tag key-in">chat_history</span>
+        <span class="key-tag key-in">context</span>
+        <span class="key-tag key-in">sub_queries</span>
+      </div>
+      <div style="margin-top:8px">
+        <span class="key-tag key-out">+ answer</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ SECTION 2: Retrieve 내부 분기 ═══ -->
+<div class="section-title">2. Retrieve 안쪽 — LLM rag_scope 에 따른 분기</div>
+
+<div class="branch-box">
+  <div class="branch-card" style="border-color:var(--accent-green)">
+    <h3 style="color:var(--accent-green)">rag_scope = SINGLE</h3>
+    <p>요약 Rerank <strong>1순위 source</strong> 한 파일의 <strong>본문 청크 전부</strong> (<code>chunk_kind=body</code>)</p>
+    <p>예: "ETF 추천봇 어떻게 만들었어?" — Rerank에 다른 파일이 섞여 있어도 <strong>맨 위 한 건만</strong> 본문 펼침</p>
+    <p style="margin-top:8px; font-size:12px; color:var(--accent-green)">
+      ✓ 특정 프로젝트 깊이
+    </p>
+  </div>
+  <div class="branch-mid">
+    <span>요약으로<br/>1차 검색</span>
+    <span class="or">?</span>
+    <span>rag_scope<br/>BROAD|SINGLE</span>
+  </div>
+  <div class="branch-card" style="border-color:var(--accent-orange)">
+    <h3 style="color:var(--accent-orange)">rag_scope = BROAD</h3>
+    <p>여러 파일의 <strong>요약 청크만</strong> — 기본은 인덱스 <strong>요약 전체</strong>(소스당 1개)를 넣고 문자 상한으로 자름 (<code>RAG_BROAD_USE_ALL_SUMMARIES</code>)</p>
+    <p>예: "LLM 관련 프로젝트 알려줘" · "어떤 프로젝트 해봤지?"</p>
+    <p style="margin-top:8px; font-size:12px; color:var(--accent-orange)">
+      ✓ 목록·회상형에서 한 파일만 넓게 쓰는 실수 완화
+    </p>
+  </div>
+</div>
+
+<!-- ═══ SECTION 3: 메타 → context 변환 ═══ -->
+<div class="section-title">3. 청크 metadata → LLM context 문자열 변환 (_format_docs)</div>
+
+<div class="transform-box">
+  <!-- 왼쪽: 메타데이터 -->
+  <div class="t-card">
+    <h3>📦 Document 청크 (인덱스)</h3>
+    <div class="meta-row">
+      <span class="meta-key mk-source">source</span>
+      <span class="meta-val">파일 경로 / 드라이브 식별자 → 같은 파일 묶기용</span>
+    </div>
+    <div class="meta-row">
+      <span class="meta-key mk-chunk">chunk_kind</span>
+      <span class="meta-val"><code>summary</code> 또는 <code>body</code> → 검색/펼치기 구분</span>
+    </div>
+    <div class="meta-row">
+      <span class="meta-key mk-origin">portfolio_origin</span>
+      <span class="meta-val"><code>personal</code> | <code>company</code> | <code>unspecified</code></span>
+    </div>
+    <div class="meta-row">
+      <span class="meta-key mk-content">page_content</span>
+      <span class="meta-val">실제 텍스트 (요약문 or 본문 조각)</span>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-dim)">
+      + page, title 등 (로더가 자동 부여)
+    </div>
+  </div>
+
+  <div class="t-arrow">→</div>
+
+  <!-- 오른쪽: context 문자열 -->
+  <div class="t-card">
+    <h3>📝 context 문자열 (LLM 입력)</h3>
+    <div class="ctx-block"><span class="hl-origin">[참고 문서 출처 유형: 개인 프로젝트]</span> <span class="hl-file">(파일: etf_recommendation.md)</span>
+<span class="hl-body">ETF 추천 챗봇은 Text-to-SQL 방식으로
+사용자의 자연어 질문을 SQL로 변환해...
+(page_content 내용)</span>
+
+<span class="hl-sep">---</span>
+
+<span class="hl-origin">[참고 문서 출처 유형: 회사·기관 소속 업무]</span> <span class="hl-file">(파일: 광고 챗봇 설계.docx)</span>
+<span class="hl-body">광고 데이터 분석 챗봇은 사내 광고주
+데이터를 기반으로...
+(page_content 내용)</span></div>
+    <div style="margin-top:10px;font-size:11px;color:var(--text-dim)">
+      <strong>portfolio_origin</strong> → 한글 라벨, <strong>source</strong> → 파일명 추출, <strong>page_content</strong> → 본문
+    </div>
+  </div>
+</div>
+
+<!-- ═══ SECTION 4: 프롬프트 매핑 ═══ -->
+<div class="section-title">4. Generate 프롬프트에 들어가는 변수</div>
+
+<div class="prompt-grid">
+  <div class="vars-card">
+    <h3>변수 → 출처</h3>
+    <div class="var-row">
+      <span class="var-name v-q">{question}</span>
+      <span class="var-from">← 사용자 원문 질문</span>
+    </div>
+    <div class="var-row">
+      <span class="var-name v-ch">{chat_history}</span>
+      <span class="var-from">← history_pairs → 메시지 변환</span>
+    </div>
+    <div class="var-row">
+      <span class="var-name v-ctx">{context}</span>
+      <span class="var-from">← Retrieve가 만든 문자열</span>
+    </div>
+    <div class="var-row">
+      <span class="var-name v-sq">{sub_queries}</span>
+      <span class="var-from">← queries를 줄바꿈 정리</span>
+    </div>
+  </div>
+
+  <div class="prompt-preview"><span class="label">── RAG_SYSTEM 프롬프트 (간략) ──</span>
+
+&lt;role&gt; 송찬영을 소개하는 에이전트 &lt;/role&gt;
+
+&lt;basic_info_content&gt;
+  PROFILE_BASIC (경력·학력·강점)
+&lt;/basic_info_content&gt;
+
+&lt;instructions&gt;
+  - <span class="ph ph-ctx">{context}</span> 안의 출처 유형 표기를 따르세요
+  - 개인/회사 구분해 말하세요
+  - 없는 내용은 추측 금지
+&lt;/instructions&gt;
+
+&lt;retrieval_queries&gt;
+  - 원문 질문: <span class="ph ph-q">{question}</span>
+  - 하위 쿼리: <span class="ph ph-sq">{sub_queries}</span>
+&lt;/retrieval_queries&gt;
+
+&lt;context&gt;
+  <span class="ph ph-ctx">{context}</span>
+&lt;/context&gt;
+
+<span class="label">── human 메시지 ──</span>
+<span class="ph ph-q">{question}</span>
+
+<span class="label">── chat_history ──</span>
+<span class="ph ph-ch">{chat_history}</span> (MessagesPlaceholder)
+  </div>
+</div>
+
+<!-- ═══ 빌드 시점 ═══ -->
+<div class="section-title">5. 빌드 시점 — YAML → 인덱스 메타</div>
+
+<div class="transform-box">
+  <div class="t-card">
+    <h3>📄 portfolio_origins.yaml</h3>
+    <div class="ctx-block" style="font-size:13px"><span style="color:var(--accent-yellow)">default:</span> excluded
+
+<span style="color:var(--accent-yellow)">rules:</span>
+  - glob: "etf_recommendation.md"
+    origin: <span style="color:var(--accent-green)">personal</span>
+  - glob: "광고 챗봇 설계.docx"
+    origin: <span style="color:var(--accent-orange)">company</span>
+  - glob: "기타.pdf"
+    origin: <span style="color:var(--accent-red)">excluded</span>  ← 인덱스 제외</div>
+  </div>
+  <div class="t-arrow">→</div>
+  <div class="t-card">
+    <h3>💾 build_index.py 가 만드는 청크</h3>
+    <div class="meta-row">
+      <span class="meta-key mk-origin">portfolio_origin: personal</span>
+      <span class="meta-val">← rule 매칭 → 인덱스에 포함</span>
+    </div>
+    <div class="meta-row">
+      <span class="meta-key mk-origin">portfolio_origin: company</span>
+      <span class="meta-val">← rule 매칭 → 인덱스에 포함</span>
+    </div>
+    <div class="meta-row" style="opacity:0.5">
+      <span class="meta-key" style="background:#7f1d1d;color:#fca5a5">excluded</span>
+      <span class="meta-val">← 파일 자체를 안 읽음 → 인덱스 없음</span>
+    </div>
+    <div class="meta-row" style="opacity:0.5">
+      <span class="meta-key" style="background:#7f1d1d;color:#fca5a5">default: excluded 에 걸림</span>
+      <span class="meta-val">← 규칙 없는 파일도 안 읽음</span>
+    </div>
+    <div style="margin-top:12px;font-size:12px;color:var(--text-dim)">
+      ※ YAML 수정 후 <code>uv run python scripts/build_index.py</code> 재실행 필수
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
